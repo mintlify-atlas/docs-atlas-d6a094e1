@@ -1,7 +1,7 @@
 ---
-title: "IEE Edu Artisan Commands Reference"
+title: "IEE Edu Custom Artisan CLI Commands Reference Guide"
 sidebarTitle: "Artisan Commands"
-description: "Custom Artisan commands for IEE Edu: create admin users, sync expired subscriptions, and manage subscription access grants."
+description: "Custom Artisan commands for IEE Edu: provision admin users with iie:make-admin, expire subscriptions, and reconcile enrollment access flags."
 ---
 
 IEE Edu ships three custom Artisan commands that handle platform administration tasks not covered by the standard Laravel toolset. `iie:make-admin` provisions administrator accounts safely from the CLI, while `subscriptions:sync-expired` and `subscription:sync` keep course access flags in sync with the state of each user's subscription. All three commands are located under `app/Console/Commands/`.

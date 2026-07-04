@@ -73,7 +73,7 @@ DELETE /admin/articles/{article}
 | Field | Type | Notes |
 |---|---|---|
 | `title` | string | Required |
-| `media` | string | Publication or media outlet name |
+| `media` | string | Required; publication or media outlet name |
 | `published_at` | date | Required |
 | `thumbnail` | file | Required on create; cover image (JPEG/PNG/WebP, max 2 MB) |
 | `file_path` | file | Optional PDF upload (max 10 MB); if provided, overrides `download_url` |
@@ -96,7 +96,7 @@ POST /admin/banners
 |---|---|---|
 | `section` | string | Required; identifies the carousel or section |
 | `order` | integer | Required; display position within the section |
-| `image` | file | Optional; JPEG/PNG/WebP/AVIF, max 4 MB |
+| `image` | file | Optional; JPEG/PNG/WebP, max 4 MB |
 | `heading` | string | Optional overlay heading text |
 | `subheading` | string | Optional overlay subheading |
 | `button_text` | string | Optional CTA button label |

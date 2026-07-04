@@ -1,5 +1,5 @@
 ---
-title: "Exams, Scoring, and Certificate Generation"
+title: "Student Final Exams, Scoring, and Certificate Generation"
 sidebarTitle: "Exams & Certificates"
 description: "Students take final exams after completing all lessons. Passing generates a downloadable PDF certificate. Configured via EDUCATION_PASSING_SCORE and EDUCATION_MAX_ATTEMPTS."
 ---
@@ -66,7 +66,7 @@ IEE Edu uses a final quiz system to assess student comprehension at the end of e
     }
     ```
 
-    On failure, `status` is `"reprobado"` and `certificate_url` is `null`.
+    On failure, `status` is `"reprobado"`, `certificate_url` is `null`, and `message` is `"Evaluación finalizada. Sigue practicando."`.
   </Step>
   <Step title="Certificate generated on passing">
     If `status = "aprobado"` and `CertificateService::checkEligibility()` returns `true`, `ExamService::handlePassing()` calls `CertificateService::getOrCreateRecord()` to persist a `Certificate` record. The enrollment's `completed_at` timestamp is also set at this point if not already present.
@@ -87,10 +87,10 @@ EDUCATION_MAX_ATTEMPTS=3
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `EDUCATION_PASSING_SCORE` | `14` | Minimum score (out of 20) required to pass; also used as `minimum_score` fallback on each `CourseQuiz` record |
+| `EDUCATION_PASSING_SCORE` | `14` | Minimum score (out of 20) required to pass; used as the display fallback in the exams listing when a quiz has no `minimum_score` set |
 | `EDUCATION_MAX_ATTEMPTS` | `3` | Maximum number of attempts a student may take per quiz; individual quizzes can override this via `CourseQuiz::max_attempts` |
 
-The per-quiz `minimum_score` and `max_attempts` columns take precedence over these global defaults when set.
+The per-quiz `minimum_score` and `max_attempts` columns take precedence over these global defaults when set. During scoring, `ExamService::submit()` uses `$quiz->minimum_score ?? 14` directly as the pass threshold.
 
 <Warning>
   Once a student exhausts all attempts (`attempts_left = 0`) without passing, the exam status transitions to `"reprobado"` permanently. No further submissions are accepted and `ExamService::canTakeQuiz()` will return `false`. Contact an administrator to reset attempts if needed.

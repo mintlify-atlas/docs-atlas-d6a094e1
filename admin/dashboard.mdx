@@ -39,7 +39,6 @@ The route renders the `admin/Dashboard` Inertia view and passes the full stats p
     - `totalCourses` / `publishedCourses` / `draftCourses`
     - `recordedCourses` — type `grabado`
     - `liveCourses` — type `en_vivo`
-    - `courseSales` — top 5 courses by approved payment count, with category, price, and total earned
   </Card>
   <Card title="Engagement" icon="chart-line">
     - `totalEnrollments` / `completedCourses` — enrollments with a `completed_at` date
@@ -51,7 +50,6 @@ The route renders the `admin/Dashboard` Inertia view and passes the full stats p
     - `totalBooks` / `availableBooks`
     - `totalBookDownloads` / `bookDownloadsThisMonth`
     - `bookWhatsappLeads` — downloads attributed to a WhatsApp source
-    - `topBooks` — top 5 books by revenue and download count
   </Card>
   <Card title="Subscriptions & Payments" icon="credit-card">
     - `activeSubs` — subscriptions with `status = activa` and `end_date >= now`
@@ -73,6 +71,17 @@ The dashboard exposes four chart datasets under the `charts` key. Each entry con
 | `charts.annually` | Last 6 months | Month + 2-digit year (e.g. `Abr 25`) |
 
 All monetary values are summed from `payments` with `status = aprobado` and are expressed in the platform's base currency (PEN). Timestamps are normalized to the `America/Lima` timezone before grouping.
+
+## Top Sales Leaderboards
+
+In addition to the `stats` and `charts` keys, `DashboardStatsService` returns two standalone top-level props passed directly to the Inertia view:
+
+| Prop | Description |
+|---|---|
+| `courseSales` | Top 5 courses by approved payment count, each including `id`, `title`, `type`, `price`, `category_id`, `image`, `approved_payments_count`, and `total_earned` |
+| `topBooks` | Top 5 books by total revenue and download count, each including `id`, `title`, `category`, `price`, `author`, `cover_image`, `downloads_count`, `approved_sales_count`, and `total_earned` |
+
+These are **not** nested inside the `stats` object — they are separate top-level keys in the Inertia props payload.
 
 ## Download Report
 

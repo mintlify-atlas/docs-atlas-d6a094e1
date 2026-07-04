@@ -40,6 +40,8 @@ All fields below come from the `Course` model's `$fillable` array:
 | `type` | enum | `grabado` (recorded), `en_vivo` (live), or `evento`/`masterclass` |
 | `status` | enum | `BORRADOR` or `PUBLICADO` — managed via publish/hide endpoints |
 | `category_id` | integer | Foreign key to `categories` table |
+| `instructor_id` | integer | Optional foreign key to `instructors` table |
+| `docente_id` | integer | Optional foreign key to `users` (teacher) table |
 | `instructor_name` | string | Instructor display name |
 | `instructor_title` | string | Instructor professional title |
 | `instructor_bio` | string | Short instructor biography |

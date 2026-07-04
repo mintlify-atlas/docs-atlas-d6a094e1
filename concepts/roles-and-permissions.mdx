@@ -1,7 +1,7 @@
 ---
-title: "Roles and Permissions in IEE Edu"
+title: "User Roles, Statuses, and Access Permissions in IEE Edu"
 sidebarTitle: "Roles & Permissions"
-description: "IEE Edu has two roles — admin and student. Learn how access is enforced through middleware, model methods, and route grouping."
+description: "IEE Edu has two roles — admin and student. Learn how access is enforced through middleware, User model methods, and route grouping."
 ---
 
 IEE Edu uses a simple two-role model: every registered user is either a `student` or an `admin`. There is no permissions table or policy file — access control is enforced at three distinct layers: the route group middleware, the `EnsureAdmin` middleware class, and helper methods on the `User` model. This keeps the system straightforward while still providing strong separation between the learner experience and the platform administration.

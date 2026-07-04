@@ -1,5 +1,5 @@
 ---
-title: "Subscription Plans and Access Control"
+title: "Subscription Plans, Lifecycle, and Course Access Control"
 sidebarTitle: "Subscriptions"
 description: "IEE Edu offers Trimestral, Semestral, and Anual plans. Learn how subscriptions grant and revoke course access and how to configure plan prices."
 ---
@@ -55,8 +55,8 @@ When a subscription payment is approved, `PaymentService::approve()` calls `Subs
   <Step title="Subscription record created">
     `Subscription::updateOrCreate(['user_id' => ...], ['status' => 'activa', 'end_date' => now()->addMonths($months)])` is executed inside `PaymentService::approve()`.
   </Step>
-  <Step title="SubscriptionObserver fires">
-    Because the `Subscription` model is decorated with `#[ObservedBy([SubscriptionObserver::class])]`, the observer's `updated()` method fires automatically when `status` changes to `activa`.
+  <Step title="SubscriptionAccessService::sync() is called directly">
+    `PaymentService::approve()` calls `app(SubscriptionAccessService::class)->sync($payment->user_id)` immediately after the `Subscription::updateOrCreate` call. Because the `Subscription` model is also decorated with `#[ObservedBy([SubscriptionObserver::class])]`, the observer's `updated()` hook fires as a side effect of the same `updateOrCreate` and calls `sync()` again — the two calls are idempotent and safe.
   </Step>
   <Step title="grantAccess() enrolls all published courses">
     `SubscriptionAccessService::grantAccess($userId)` fetches every `Course` where `status = 'PUBLICADO'` and creates or updates an `Enrollment` row for each one. Existing progress is always preserved.

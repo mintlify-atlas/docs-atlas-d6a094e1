@@ -1,5 +1,5 @@
 ---
-title: "Accessing Publications: Books and Articles"
+title: "Accessing IEE Edu Publications: Books and Articles"
 sidebarTitle: "Publications"
 description: "IEE Edu's publication library includes books (purchasable) and articles. Students browse, purchase, and download materials from the explore catalog."
 ---
@@ -81,7 +81,7 @@ GET /student/publications/books/{book}/interest
 `CatalogController::bookPurchaseInterest()` does two things:
 
 1. Records a `"whatsapp"` interaction via `BookDownloadService::record()` for analytics.
-2. Redirects the student to a pre-filled WhatsApp message addressed to the IEE sales number (`IIE_WHATSAPP_SALES` from the environment), with the book title and price embedded:
+2. Redirects the student to a pre-filled WhatsApp message addressed to the IEE sales number (resolved via `SiteSettingsService::whatsappSales()`, which reads from the `site_settings` database table and falls back to the configured default), with the book title and price embedded:
 
 ```
 Hola, estoy interesado en adquirir el material: *{title}* que tiene un costo de S/ {price}. ¿Me podrían brindar más información?

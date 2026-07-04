@@ -1,5 +1,5 @@
 ---
-title: "Payment Workflow: Comprobante Upload and Approval"
+title: "Manual Payment Workflow: Comprobante Upload and Approval"
 sidebarTitle: "Payments"
 description: "IEE Edu uses a manual payment proof workflow. Students upload a comprobante; admins approve or reject it to grant course or subscription access."
 ---
@@ -46,7 +46,7 @@ A payment moves through the following statuses:
 | `aprobado` | Admin has verified the proof and granted access | Admin |
 | `rechazado` | Admin has rejected the proof | Admin |
 
-```
+```text
 pendiente → en_revision → aprobado
                        ↘ rechazado
 aprobado  → en_revision  (via revert)
@@ -64,14 +64,14 @@ aprobado  → en_revision  (via revert)
   </Step>
   <Step title="Create payment record">
     The student submits the payment form. A `POST` request is sent to `student.payments.store`:
-    ```
+    ```http
     POST /student/payments
     ```
     A `Payment` record is created with `status = 'pendiente'` and the relevant `course_id`, `book_id`, or `subscription_type` populated.
   </Step>
   <Step title="Upload comprobante">
     After completing the bank transfer, the student uploads the proof-of-payment image:
-    ```
+    ```http
     POST /student/payments/{payment}/comprobante
     ```
     The file is stored and the payment status moves to `en_revision`. The student can also view all their payment records at `GET /student/payments`.
@@ -86,14 +86,14 @@ aprobado  → en_revision  (via revert)
 <Steps>
   <Step title="View payment queue">
     The admin navigates to the payments list:
-    ```
+    ```http
     GET /admin/payments
     ```
     Payments can be filtered by status. The admin sees the student name, payment type, amount, and comprobante thumbnail.
   </Step>
   <Step title="Review individual payment">
     The admin opens a specific payment to inspect the comprobante in detail:
-    ```
+    ```http
     GET /admin/payments/{payment}
     ```
   </Step>
@@ -101,13 +101,13 @@ aprobado  → en_revision  (via revert)
     Based on the review, the admin takes one of two actions:
 
     **Approve:**
-    ```
+    ```http
     PATCH /admin/payments/{payment}/approve
     ```
     `PaymentService::approve()` sets `status = 'aprobado'`, then triggers the appropriate downstream action (enrollment, book order, or subscription activation). A `PaymentApprovedNotification` is sent to the student.
 
     **Reject:**
-    ```
+    ```http
     PATCH /admin/payments/{payment}/reject
     ```
     `PaymentService::reject()` sets `status = 'rechazado'` and sends a `PaymentRejectedNotification` to the student.
@@ -124,7 +124,7 @@ aprobado  → en_revision  (via revert)
 
 If an admin approved a payment in error, they can revert it:
 
-```
+```http
 PATCH /admin/payments/{payment}/revert
 ```
 
@@ -140,9 +140,9 @@ PATCH /admin/payments/{payment}/revert
   Reverting a subscription payment will cancel the student's subscription and immediately revoke their access to all subscription-granted courses. The student's progress is preserved, but they will lose the ability to continue lessons until a new subscription is approved.
 </Warning>
 
-## Exam Environment Variables
+## Quiz and Certificate Environment Variables
 
-Two environment variables control the behaviour of the exam system that gates course certificates:
+After a course payment is approved and the student gains classroom access, they must pass the course quiz to unlock their certificate. Two environment variables control the global quiz evaluation rules that apply across all paid and subscription courses:
 
 ```env
 EDUCATION_PASSING_SCORE=14

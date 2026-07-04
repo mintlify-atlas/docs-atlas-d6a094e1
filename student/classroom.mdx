@@ -1,5 +1,5 @@
 ---
-title: "Using the IEE Edu Virtual Classroom"
+title: "Navigating the IEE Edu Interactive Virtual Classroom"
 sidebarTitle: "Classroom"
 description: "The virtual classroom provides video lessons, progress tracking, downloadable materials, lesson comments, and access to final exams and certificates."
 ---
@@ -19,7 +19,7 @@ GET /student/classroom/{course:slug}/{lesson?}
 `ClassroomController::show()` resolves the lesson to display using the following priority:
 
 1. If a `{lesson}` ID is provided in the URL, that lesson is loaded — but only if it belongs to the requested course (IDOR protection via `lesson->course_id !== course->id` check).
-2. If no lesson is specified, the controller falls back to `modules.first().lessons.first()`, then to the first unmodule-attached lesson.
+2. If no lesson is specified, the controller falls back to `modules.first().lessons.first()`, then to `course.lessons.first()` (ordered by `sort_order`) if no modules exist.
 3. If the course has no lessons at all, the classroom renders with `currentLesson: null`.
 
 <Warning>

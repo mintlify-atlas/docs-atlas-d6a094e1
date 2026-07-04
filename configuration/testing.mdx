@@ -57,6 +57,7 @@ The following environment variables are automatically applied during every test 
 | Variable | Test Value | Reason |
 |---|---|---|
 | `APP_ENV` | `testing` | Disables production-only guards and enables test helpers. |
+| `APP_MAINTENANCE_DRIVER` | `file` | Forces file-based maintenance mode state during tests. |
 | `DB_CONNECTION` | `sqlite` | Lightweight driver for fast test execution. |
 | `DB_DATABASE` | `:memory:` | Fresh in-memory database per test run — no leftovers between runs. |
 | `CACHE_STORE` | `array` | Prevents test cache pollution; resets automatically each run. |

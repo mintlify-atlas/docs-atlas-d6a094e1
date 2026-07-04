@@ -12,7 +12,7 @@ IEE Edu's Premium subscription model grants students access to the full course c
 GET /admin/subscriptions
 ```
 
-Returns a paginated list of all subscriptions, each loaded with the associated user (id, name, email). The response also enriches each record with the most recent related payment's `amount`, `comprobante`, and `status` to give the reviewing admin full context without opening a separate payment page.
+Returns a paginated list of all subscriptions, each loaded with the associated user (id, name, email). The response also enriches each record with three computed fields derived from the most recent related payment, giving the reviewing admin full context without opening a separate payment page: `payment_amount` (the payment total in PEN), `payment_capture` (the comprobante image URL), and `payment_status` (the payment status string).
 
 **Supported query parameters:**
 
