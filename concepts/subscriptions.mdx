@@ -1,0 +1,150 @@
+---
+title: "Subscription Plans and Access Control"
+sidebarTitle: "Subscriptions"
+description: "IEE Edu offers Trimestral, Semestral, and Anual plans. Learn how subscriptions grant and revoke course access and how to configure plan prices."
+---
+
+IEE Edu's subscription system gives students unlimited access to all published courses for a fixed period. When a subscription payment is approved by an admin, the platform automatically enrolls the student in every published course. When the subscription expires or is cancelled, that bulk access is quietly revoked — without deleting any progress the student has made. The entire lifecycle is managed by a single service class (`SubscriptionAccessService`) to ensure consistent behavior across every trigger point: payment approval, admin toggle, expiry command, and observer events.
+
+## Plans Overview
+
+Three subscription plans are available. Their prices are read from environment variables at runtime:
+
+| Plan | Env Variable | Default Price | Duration |
+|---|---|---|---|
+| Trimestral | `IIE_PLAN_TRIMESTRAL_PRICE` | S/ 350 | 3 months |
+| Semestral | `IIE_PLAN_SEMESTRAL_PRICE` | S/ 600 | 6 months |
+| Anual | `IIE_PLAN_ANUAL_PRICE` | S/ 990 | 12 months |
+
+Plan names, descriptions, features, and display order are stored in the `subscription_plans` table and can be edited by an admin at **Settings → Plans** (`/admin/settings/plans`). The `SubscriptionPlan` model provides a `toPublicConfig()` method that shapes the data for the public `/planes` page.
+
+To update a plan's price without a code deploy, set the environment variable and restart the application:
+
+```env
+IIE_PLAN_TRIMESTRAL_PRICE=350
+IIE_PLAN_SEMESTRAL_PRICE=600
+IIE_PLAN_ANUAL_PRICE=990
+```
+
+## Subscription Model
+
+A `Subscription` record is created (or updated via `updateOrCreate`) when a subscription payment is approved. The model's fillable fields and status constants are:
+
+```php
+// app/Models/Subscription.php
+public const STATUS_ACTIVE    = 'activa';
+public const STATUS_CANCELLED = 'cancelada';
+public const STATUS_EXPIRED   = 'expirada';
+
+protected $fillable = [
+    'user_id',
+    'type',       // 'trimestral' | 'semestral' | 'anual'
+    'start_date',
+    'end_date',
+    'status',
+];
+```
+
+`start_date` and `end_date` are automatically cast to `Carbon` instances. Each user has at most one subscription record; approving a new subscription payment calls `Subscription::updateOrCreate` keyed on `user_id`, which extends an existing subscription or creates a new one.
+
+## Access Grant Flow
+
+When a subscription payment is approved, `PaymentService::approve()` calls `SubscriptionAccessService::sync()`, which in turn calls `grantAccess()`:
+
+<Steps>
+  <Step title="Subscription record created">
+    `Subscription::updateOrCreate(['user_id' => ...], ['status' => 'activa', 'end_date' => now()->addMonths($months)])` is executed inside `PaymentService::approve()`.
+  </Step>
+  <Step title="SubscriptionObserver fires">
+    Because the `Subscription` model is decorated with `#[ObservedBy([SubscriptionObserver::class])]`, the observer's `updated()` method fires automatically when `status` changes to `activa`.
+  </Step>
+  <Step title="grantAccess() enrolls all published courses">
+    `SubscriptionAccessService::grantAccess($userId)` fetches every `Course` where `status = 'PUBLICADO'` and creates or updates an `Enrollment` row for each one. Existing progress is always preserved.
+  </Step>
+  <Step title="Enrollment flags are set">
+    For subscription-granted courses, the enrollment is created with `subscription_granted = true` and `subscription_active = true`. Courses the user already purchased individually get `subscription_active = true` only — their `subscription_granted` flag stays `false`.
+  </Step>
+</Steps>
+
+## Access Revoke Flow
+
+When a subscription expires or is cancelled, `revokeAccess()` is called:
+
+<Steps>
+  <Step title="Trigger">
+    The revoke can be triggered by: the `subscriptions:sync-expired` Artisan command, the `SubscriptionObserver::updated()` event when `status` changes to `cancelada` or `expirada`, or a manual call to `SubscriptionAccessService::sync()`.
+  </Step>
+  <Step title="Individual purchases protected">
+    The service first collects course IDs the user has approved individual payments for. These are never touched.
+  </Step>
+  <Step title="Masterclass exception">
+    Enrollments for masterclass/event-type courses that were `subscription_granted = true` are **converted to permanent access**: `subscription_granted` is set to `false` and `subscription_active` stays `true`.
+  </Step>
+  <Step title="Subscription enrollments deactivated">
+    All remaining subscription-granted enrollments (excluding individual purchases and masterclasses) have `subscription_active` set to `false`. The enrollment row is kept — progress, lesson position, and completion state are fully preserved.
+  </Step>
+</Steps>
+
+<Warning>
+  Never manually edit the `enrollments` table to revoke or restore subscription access. Always call `SubscriptionAccessService::sync($userId)`. Direct database edits will bypass the masterclass exception logic, the individual-purchase safeguard, and the observer pipeline.
+</Warning>
+
+## Masterclass Exception
+
+Courses of type `evento` or `masterclass` retain access permanently — even after a subscription ends. This is enforced by the `Course::retainsAccessAfterSubscriptionEnds()` method:
+
+```php
+// app/Models/Course.php
+public function retainsAccessAfterSubscriptionEnds(): bool
+{
+    return $this->isMasterclass();
+}
+
+// isMasterclass() returns true when type is 'evento' or 'masterclass'
+```
+
+During `grantAccess()`, masterclass courses are enrolled via `ensurePermanentEnrollment()`, which sets `subscription_granted = false` from the start — meaning `revokeAccess()` will never touch them.
+
+## SubscriptionObserver
+
+The `SubscriptionObserver` is registered on the `Subscription` model via the `#[ObservedBy]` attribute and handles two lifecycle events:
+
+| Event | Condition | Action |
+|---|---|---|
+| `updated` | `status` field changed | Calls `SubscriptionAccessService::sync($subscription->user_id)` — grants access if now active, revokes if now cancelled/expired. |
+| `deleted` | Subscription record deleted | Calls `SubscriptionAccessService::sync($subscription->user_id)` to revoke all subscription-based access for that user. |
+
+```php
+// app/Observers/SubscriptionObserver.php
+public function updated(Subscription $subscription): void
+{
+    // Solo actúa si el campo 'status' fue el que cambió
+    if ($subscription->wasChanged('status')) {
+        $this->accessService->sync($subscription->user_id);
+    }
+}
+
+public function deleted(Subscription $subscription): void
+{
+    $this->accessService->sync($subscription->user_id);
+}
+```
+
+## Sync Command
+
+A scheduled Artisan command checks for subscriptions that have passed their `end_date` and marks them as expired:
+
+```bash
+php artisan subscriptions:sync-expired
+```
+
+The command finds all subscriptions where `status = 'activa'` and `end_date < now()`, sets each to `status = 'expirada'`, and calls `SubscriptionAccessService::sync()` for each affected user. It is scheduled to run **daily** in `routes/console.php`:
+
+```php
+// routes/console.php
+Schedule::command('subscriptions:sync-expired')->daily();
+```
+
+<Tip>
+  Run `php artisan subscriptions:sync-expired` manually after any server migration or import to ensure all enrollment states are consistent with the current subscription data.
+</Tip>

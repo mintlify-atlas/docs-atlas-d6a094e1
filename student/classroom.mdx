@@ -1,0 +1,138 @@
+---
+title: "Using the IEE Edu Virtual Classroom"
+sidebarTitle: "Classroom"
+description: "The virtual classroom provides video lessons, progress tracking, downloadable materials, lesson comments, and access to final exams and certificates."
+---
+
+The IEE Edu virtual classroom is the primary learning environment where students watch video lessons, track their progress through a course, interact with peers via comments, and download supplementary materials. Once all lessons in a course are completed, the classroom also surfaces the link to the final exam and, upon passing, the certificate download.
+
+## Accessing the Classroom
+
+The classroom is loaded through a single route that accepts an optional lesson segment:
+
+```http
+GET /student/classroom/{course:slug}/{lesson?}
+```
+
+**Route name:** `student.classroom`
+
+`ClassroomController::show()` resolves the lesson to display using the following priority:
+
+1. If a `{lesson}` ID is provided in the URL, that lesson is loaded — but only if it belongs to the requested course (IDOR protection via `lesson->course_id !== course->id` check).
+2. If no lesson is specified, the controller falls back to `modules.first().lessons.first()`, then to the first unmodule-attached lesson.
+3. If the course has no lessons at all, the classroom renders with `currentLesson: null`.
+
+<Warning>
+  Access to the classroom is enforced by `CoursePolicy::viewClassroom()`. A student must have a **visible, active enrollment** to enter — specifically, `subscription_active = true` for subscription-granted enrollments, or any permanent enrollment (individual purchase or free enroll). Attempting to access the classroom without valid access will result in an authorization error.
+</Warning>
+
+## Lesson Navigation
+
+The classroom view receives the following navigation props from the controller:
+
+| Prop | Type | Description |
+|------|------|-------------|
+| `prevLessonId` | integer\|null | ID of the lesson before the current one in module order |
+| `nextLessonId` | integer\|null | ID of the lesson after the current one in module order |
+| `allLessonsCount` | integer | Total number of lessons in the course |
+| `currentLessonIndex` | integer | 1-based position of the current lesson |
+| `completedLessons` | integer[] | Array of lesson IDs the student has already completed |
+| `allLessonsCompleted` | boolean | `true` when every lesson has an `is_completed = true` record |
+
+The frontend uses `currentLessonIndex` and `allLessonsCount` to render the course progress bar, and `completedLessons` to mark individual lessons in the sidebar as done.
+
+## Progress Tracking
+
+Lesson completion is reported back to the server via a dedicated endpoint:
+
+```http
+POST /student/classroom/progress
+```
+
+**Route name:** `student.classroom.progress`
+
+The request body accepts either a single lesson ID or a batch:
+
+```json
+// Single lesson
+{ "lesson_id": 42 }
+
+// Batch (e.g., on video end or page unload)
+{ "lesson_ids": [42, 43, 44] }
+```
+
+`ClassroomController::updateProgress()` processes each ID by:
+
+1. Creating or updating a `LessonProgress` record with `is_completed = 1`.
+2. Calling `ProgressService::syncProgress()` to recalculate the enrollment's `progress` percentage and update `last_lesson_id`.
+3. Calling `CertificateService::generateIfEligible()` to create a certificate record automatically if all eligibility criteria are now met.
+
+The endpoint responds with JSON when the request expects it:
+
+```json
+{ "success": true, "progress": 75 }
+```
+
+## Lesson Comments
+
+Each lesson supports threaded comments with likes. All comment routes require authentication and are rate-limited:
+
+<Note>
+  Comment endpoints are protected by the `throttle:30,1` middleware — a maximum of **30 requests per minute** per user. Exceeding this limit returns a `429 Too Many Requests` response.
+</Note>
+
+| Method | Route | Name | Description |
+|--------|-------|------|-------------|
+| `POST` | `/student/comments/{lesson}` | `student.comments.store` | Post a new top-level comment on a lesson |
+| `PUT` | `/student/comments/{comment}` | `student.comments.update` | Edit an existing comment |
+| `DELETE` | `/student/comments/{comment}` | `student.comments.destroy` | Delete a comment |
+| `POST` | `/student/comments/{comment}/like` | `student.comments.like` | Toggle a like on a comment or reply |
+
+Comments are loaded by the classroom controller with their replies and like counts pre-fetched. The `is_liked` boolean is resolved per-comment for the authenticated user using a single aggregated query to avoid N+1 on comment lists.
+
+## Downloadable Materials
+
+Each lesson can have one or more attached materials. The `materials` relationship is eager-loaded when the lesson is passed to the classroom view (`$lesson->load('materials')`). Each material exposes:
+
+| Field | Description |
+|-------|-------------|
+| `file_path` | Relative path on the `public` storage disk — served directly via Laravel Storage |
+| `external_url` | An absolute external URL (e.g., Google Drive, Dropbox) used as a fallback when `file_path` is not set |
+
+The frontend checks `file_path` first; if absent it falls back to `external_url` for the download link.
+
+## Live Classes
+
+Students can view scheduled live class sessions from:
+
+```http
+GET /student/live-classes
+```
+
+**Route name:** `student.live-classes.index`
+
+`LiveClassController::liveClasses()` returns sessions relevant to the authenticated student's enrolled courses.
+
+## Exam Access
+
+The `quizStats` prop is passed to the classroom view for courses that have a final quiz (`course->quizzes->first()`):
+
+```json
+{
+  "quiz_id": 7,
+  "passed": false,
+  "attempts_left": 3,
+  "max_attempts": 3,
+  "certificate_url": null,
+  "certificate_code": null,
+  "certificate_date": null
+}
+```
+
+The exam link is only actionable in the UI when `allLessonsCompleted = true`. Attempting to navigate to the exam route with `progress < 100` on the enrollment will redirect back to the exams index with an error message.
+
+Once the student passes, `certificate_url` is populated with the streaming download URL:
+
+```
+/student/certificates/{id}/download?action=stream
+```

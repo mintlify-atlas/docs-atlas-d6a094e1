@@ -1,0 +1,151 @@
+---
+title: "Exams, Scoring, and Certificate Generation"
+sidebarTitle: "Exams & Certificates"
+description: "Students take final exams after completing all lessons. Passing generates a downloadable PDF certificate. Configured via EDUCATION_PASSING_SCORE and EDUCATION_MAX_ATTEMPTS."
+---
+
+IEE Edu uses a final quiz system to assess student comprehension at the end of each course. After completing 100% of a course's lessons, a student becomes eligible to sit the exam. Scores are calculated on a 0–20 scale, and a passing result automatically triggers the creation of a downloadable PDF certificate of approval — provided the course has `certificate_enabled = true`.
+
+## Exam Flow
+
+<Steps>
+  <Step title="Complete all course lessons">
+    The exam is locked until the student's enrollment `progress` reaches `100`. This is enforced both in the UI (`allLessonsCompleted` prop in the classroom) and server-side in `ExamController::takeExam()` and `ExamService::submit()`.
+  </Step>
+  <Step title="Access the exam from the classroom or exams list">
+    Navigate to the exam via the classroom's exam panel or the dedicated exams section:
+
+    ```http
+    GET /student/exams/{quiz}/take
+    ```
+
+    **Route name:** `student.exams.take`
+
+    The controller loads the quiz with all questions and their answer options (`quiz->load(['questions.answers', 'course'])`). The `current_attempt` counter (current attempt number) is passed to the frontend so the student knows which attempt they are on.
+  </Step>
+  <Step title="Submit answers">
+    When the student finishes, answers are posted as a map of `question_id → answer_id`:
+
+    ```http
+    POST /student/exams/{quiz}/submit
+    ```
+
+    **Route name:** `student.exams.submit`
+
+    ```json
+    {
+      "answers": {
+        "1": 4,
+        "2": 9,
+        "3": 11
+      }
+    }
+    ```
+
+    `ExamService::submit()` scores the attempt before saving. Correct answers are counted and scaled to a 0–20 score:
+
+    ```
+    finalScore = round((correctCount / totalQuestions) × 20)
+    ```
+
+    The attempt is saved as a `CourseExamAttempt` record with `status: "aprobado"` or `status: "reprobado"`.
+  </Step>
+  <Step title="View the result">
+    After submission the controller returns a `back()` response with the `exam_result` flash payload:
+
+    ```json
+    {
+      "attempt_id": 12,
+      "score": 16,
+      "status": "aprobado",
+      "correct_count": 8,
+      "total_questions": 10,
+      "passing_score": 14,
+      "certificate_url": "/student/certificates/3/download?action=stream",
+      "message": "¡Felicidades! Has aprobado la evaluación."
+    }
+    ```
+
+    On failure, `status` is `"reprobado"` and `certificate_url` is `null`.
+  </Step>
+  <Step title="Certificate generated on passing">
+    If `status = "aprobado"` and `CertificateService::checkEligibility()` returns `true`, `ExamService::handlePassing()` calls `CertificateService::getOrCreateRecord()` to persist a `Certificate` record. The enrollment's `completed_at` timestamp is also set at this point if not already present.
+
+    The certificate PDF is generated on demand when the student downloads it — not eagerly on passing — keeping submission latency low.
+  </Step>
+</Steps>
+
+## Configuration
+
+Exam pass threshold and attempt limits are configured via environment variables and read through the `config('education.*')` namespace:
+
+```ini
+# .env
+EDUCATION_PASSING_SCORE=14
+EDUCATION_MAX_ATTEMPTS=3
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EDUCATION_PASSING_SCORE` | `14` | Minimum score (out of 20) required to pass; also used as `minimum_score` fallback on each `CourseQuiz` record |
+| `EDUCATION_MAX_ATTEMPTS` | `3` | Maximum number of attempts a student may take per quiz; individual quizzes can override this via `CourseQuiz::max_attempts` |
+
+The per-quiz `minimum_score` and `max_attempts` columns take precedence over these global defaults when set.
+
+<Warning>
+  Once a student exhausts all attempts (`attempts_left = 0`) without passing, the exam status transitions to `"reprobado"` permanently. No further submissions are accepted and `ExamService::canTakeQuiz()` will return `false`. Contact an administrator to reset attempts if needed.
+</Warning>
+
+## Certificate Eligibility
+
+`CertificateService::checkEligibility(User $user, Course $course)` applies three gates in sequence:
+
+1. **`certificate_enabled` flag** — returns `false` immediately if `course->certificate_enabled` is `false`.
+2. **All lessons completed** — queries `LessonProgress` to confirm every lesson in the course (across all modules) has `is_completed = true` for the student.
+3. **All quizzes passed** — for each `CourseQuiz` belonging to the course, verifies that at least one `CourseExamAttempt` exists with `status = "aprobado"`.
+
+All three conditions must be satisfied simultaneously for eligibility to return `true`.
+
+## Certificate Routes
+
+| Method | Route | Name | Description |
+|--------|-------|------|-------------|
+| `GET` | `/student/certificates` | `student.certificates.index` | List all earned certificates for the authenticated student |
+| `GET` | `/student/certificates/{certificate}/download` | `student.certificates.download` | Download or stream the certificate PDF |
+
+The list endpoint only returns certificates for courses where `certificate_enabled = true` and orders them by `issue_date` descending. Each item includes:
+
+- `code` — unique certificate identifier in the format `IEE-XXXXXXXX-YYYY`
+- `issue_date` — formatted as `d M Y` (e.g., `15 Jun 2025`)
+- `download_url` — pre-built URL to the download route
+- `course_title`, `image` — course metadata for the certificate card UI
+
+## Certificate PDF
+
+PDFs are generated on download using [`barryvdh/laravel-dompdf`](https://github.com/barryvdh/laravel-dompdf) with an A4 landscape paper size:
+
+```php
+Pdf::loadView('pdf.certificate', $data)->setPaper('a4', 'landscape');
+```
+
+The `pdf.certificate` Blade view receives:
+
+| Variable | Description |
+|----------|-------------|
+| `$user` | The certificate owner |
+| `$course` | The completed course |
+| `$date` | Issue date formatted as `d/m/Y` |
+| `$code` | The unique certificate code |
+| `$template` | The `CertificateTemplate` model (if a custom template is configured for this course) |
+| `$template_image_base64` | Base64-encoded PNG/JPG of the template background image (embedded for offline rendering) |
+| `$is_custom` | Boolean — `true` when a custom template image is present |
+
+Pass `?action=stream` to the download URL to display the PDF inline in the browser rather than triggering a file download:
+
+```
+GET /student/certificates/{certificate}/download?action=stream
+```
+
+<Note>
+  Administrators can view and manage all issued certificates at `/admin/certificates`. The admin panel lists certificates across all students and courses, and can be used to audit or revoke individual certificate records.
+</Note>

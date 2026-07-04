@@ -1,0 +1,154 @@
+---
+title: "IEE Edu Artisan Commands Reference"
+sidebarTitle: "Artisan Commands"
+description: "Custom Artisan commands for IEE Edu: create admin users, sync expired subscriptions, and manage subscription access grants."
+---
+
+IEE Edu ships three custom Artisan commands that handle platform administration tasks not covered by the standard Laravel toolset. `iie:make-admin` provisions administrator accounts safely from the CLI, while `subscriptions:sync-expired` and `subscription:sync` keep course access flags in sync with the state of each user's subscription. All three commands are located under `app/Console/Commands/`.
+
+---
+
+## iie:make-admin
+
+Creates or updates a user record with `role=admin` and `status=activo`. Because it uses `updateOrCreate`, running it against an existing email is safe — it will simply update the name, password, and role rather than creating a duplicate account.
+
+### Signature
+
+```bash
+php artisan iie:make-admin {email} {--name=Admin} {--password=}
+```
+
+### Arguments & Options
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `email` | Argument | ✅ Yes | — | Email address of the user to create or update. |
+| `--name` | Option | No | `Admin` | Display name assigned to the user. |
+| `--password` | Option | No | `password` | Plain-text password (hashed with bcrypt before storing). |
+
+### Examples
+
+```bash
+# Create an admin with a secure password
+php artisan iie:make-admin admin@iee.edu --name="Super Admin" --password="S3cur3P@ss!"
+
+# Quick local dev admin (uses default password 'password')
+php artisan iie:make-admin dev@iee.edu --name="Dev Admin"
+
+# Update an existing user to admin role
+php artisan iie:make-admin existing@iee.edu --name="Promoted User" --password="NewP@ss123"
+```
+
+### What It Does Internally
+
+<Steps>
+  <Step title="Resolve arguments">
+    Reads the `email` argument and the `--name` and `--password` options. If `--password` is omitted or empty, falls back to the literal string `'password'`.
+  </Step>
+  <Step title="Upsert the user">
+    Calls `User::updateOrCreate(['email' => $email], [...])` with `role='admin'`, `status='activo'`, the provided name, and the bcrypt-hashed password.
+  </Step>
+  <Step title="Output confirmation">
+    Prints the user's email via `$this->info()` and echoes the plain-text password via `$this->warn()` so you can verify what was set.
+  </Step>
+</Steps>
+
+<Warning>
+  The `--password` option defaults to `'password'` when omitted. **Never rely on this default in production.** Always pass an explicit `--password` with a strong, unique value when provisioning admin accounts on a live server. The command echoes the plain-text password to the terminal upon completion — treat that output as sensitive.
+</Warning>
+
+---
+
+## subscriptions:sync-expired
+
+Scans all active subscriptions for ones whose `end_date` has passed, marks each one as expired, and revokes the corresponding course access grants for the affected users. This command is designed to be run automatically by the Laravel scheduler (see the [Scheduler](/configuration/scheduler) page), but can also be triggered manually at any time.
+
+### Signature
+
+```bash
+php artisan subscriptions:sync-expired
+```
+
+### Arguments & Options
+
+This command takes no arguments or options.
+
+### Examples
+
+```bash
+# Run immediately (e.g. after approving a bulk refund)
+php artisan subscriptions:sync-expired
+
+# Run inside a deployment pipeline to clean up before go-live
+php artisan migrate --force && php artisan subscriptions:sync-expired
+```
+
+### What It Does Internally
+
+<Steps>
+  <Step title="Find expired subscriptions">
+    Queries the `subscriptions` table for records where `status = 'activa'` **and** `end_date < now()`. These are memberships that are still flagged as active in the database but have already passed their end date.
+  </Step>
+  <Step title="Early exit if none found">
+    If the query returns zero rows, outputs `No expired subscriptions found.` and exits cleanly with no further database writes.
+  </Step>
+  <Step title="Mark each subscription as expired">
+    Iterates over the results and calls `$subscription->update(['status' => 'expirada'])` on each one, using the `STATUS_EXPIRED` constant defined on the `Subscription` model.
+  </Step>
+  <Step title="Sync access for each affected user">
+    Calls `SubscriptionAccessService::sync($subscription->user_id)` for every expired subscription. The service recalculates which courses the user may access based on their remaining active subscriptions and individual payment records, then updates the `enrollments` table accordingly.
+  </Step>
+  <Step title="Report results">
+    Outputs a confirmation line per subscription (e.g. `Synced expired subscription ID: 42 for User ID: 7`) and a final summary count: `Successfully synced N expired subscriptions.`
+  </Step>
+</Steps>
+
+<Tip>
+  After writing a test that approves a subscription and then backdates its `end_date`, run `php artisan subscriptions:sync-expired` manually to verify that the enrollment records are actually revoked. Check the `enrollments` table for `subscription_active = false` on that user's rows.
+</Tip>
+
+---
+
+## subscription:sync
+
+Performs a full reconciliation of `subscription_active` flags across every user in the `enrollments` table. The optional `--backfill` flag also repairs the `subscription_granted` column on pre-migration enrollment rows that were created before the subscription system existed.
+
+### Signature
+
+```bash
+php artisan subscription:sync {--backfill : Mark pre-migration enrollments with correct subscription_granted flag}
+```
+
+### Arguments & Options
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `--backfill` | Flag | No | `false` | When present, runs a historical data repair pass before the main sync. |
+
+### Examples
+
+```bash
+# Run a normal sync of all user access flags
+php artisan subscription:sync
+
+# One-time backfill after migrating from a pre-subscription schema
+php artisan subscription:sync --backfill
+```
+
+### What It Does Internally
+
+<Steps>
+  <Step title="Optional backfill pass (--backfill only)">
+    Fetches every distinct `user_id` from the `enrollments` table. For each user, it collects all `course_id` values from the `payments` table where `status = 'aprobado'`. Any enrollment row for that user that does **not** have a matching individual payment is assumed to have come from a subscription grant and is updated with `subscription_granted = true`. This repairs historical data created before the subscription system was introduced.
+  </Step>
+  <Step title="Sync all users">
+    Fetches every distinct `user_id` from `enrollments` again and calls `SubscriptionAccessService::sync($userId)` for each one. This recalculates the `subscription_active` flag on all enrollment rows for every user in the system.
+  </Step>
+  <Step title="Report results">
+    Outputs a progress message at the start of each phase and a final `✅ Sync complete for N users.` summary line.
+  </Step>
+</Steps>
+
+<Warning>
+  The `--backfill` flag performs bulk `UPDATE` queries against the `enrollments` table. Run it only once after a schema migration on a system that had existing enrollments. Running it repeatedly is safe (the updates are idempotent) but unnecessary and potentially slow on large datasets.
+</Warning>

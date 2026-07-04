@@ -1,0 +1,154 @@
+---
+title: "Managing Books, Articles, Banners, and Consultancies"
+sidebarTitle: "Content Management"
+description: "Admin tools for managing the IEE Edu publication library (books and articles), homepage banners, book orders, and consultancy requests."
+---
+
+Beyond courses, IEE Edu hosts a publication library of books and articles, a configurable homepage hero carousel, and a consultancy intake system. The content management section of the admin panel unifies all of these touchpoints — letting administrators upload resources, update branding assets, respond to consultation leads, and adjust global platform settings from a single area.
+
+## Books
+
+The book library supports three categories: `Libro` (purchasable), `Libro en camino` (coming soon, always free), and `Guía`. Each book entry tracks downloads and approved sales.
+
+**List and create:**
+```
+GET   /admin/books
+POST  /admin/books
+```
+
+**Update and delete:**
+```
+PATCH  /admin/books/{book}
+DELETE /admin/books/{book}
+```
+
+**Book fields:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `title` | string | Required |
+| `category` | enum | `Libro`, `Libro en camino`, or `Guía` |
+| `author` | string | Optional; defaults to `IEE` for "en camino" books |
+| `description` | string | Required |
+| `price` | float | Required; `0` for free/coming-soon books |
+| `stock` | integer | Required when `price > 0`; null for free books |
+| `cover_image` | file | Required on create; JPEG/PNG/WebP, max 2 MB |
+| `file_path` | file | Optional downloadable file (PDF, DOC, DOCX, ZIP, max 10 MB) |
+| `download_url` | string | Optional external download URL (used if no file is uploaded) |
+| `is_available` | boolean | Required; controls catalog visibility |
+
+<Note>
+  Book access is **not** covered by a Premium subscription. Each book requires its own individual payment. Admins approve book payments through the Payments panel, which then records a `BookOrder` and grants the student download access.
+</Note>
+
+## Book Orders
+
+When a book payment is approved, an associated `BookOrder` record is created to track the fulfillment status. Admins can update that status as they process orders.
+
+```
+GET   /admin/book-orders
+PATCH /admin/book-orders/{bookOrder}
+```
+
+The index endpoint returns all book orders, including related user and book information, for review and status updates.
+
+## Articles
+
+Articles represent IEE's media publications — press clippings, research releases, and editorial content. Each article links to a PDF file or an external URL.
+
+**List and create:**
+```
+GET   /admin/articles
+POST  /admin/articles
+```
+
+**Update and delete:**
+```
+PATCH  /admin/articles/{article}
+DELETE /admin/articles/{article}
+```
+
+**Article fields:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `title` | string | Required |
+| `media` | string | Publication or media outlet name |
+| `published_at` | date | Required |
+| `thumbnail` | file | Required on create; cover image (JPEG/PNG/WebP, max 2 MB) |
+| `file_path` | file | Optional PDF upload (max 10 MB); if provided, overrides `download_url` |
+| `download_url` | string | Required; used as the download/read link |
+
+Deleting an article removes its associated thumbnail and PDF file from storage.
+
+## Banners
+
+Banners populate the homepage hero carousel and other featured sections. Each banner is identified by a `section` slug and a display `order` integer. Upserting (create-or-update) is handled by a single `POST` endpoint — if a banner already exists for the given `section` + `order` combination, it is updated in place.
+
+```
+GET  /admin/banners
+POST /admin/banners
+```
+
+**Banner fields:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `section` | string | Required; identifies the carousel or section |
+| `order` | integer | Required; display position within the section |
+| `image` | file | Optional; JPEG/PNG/WebP/AVIF, max 4 MB |
+| `heading` | string | Optional overlay heading text |
+| `subheading` | string | Optional overlay subheading |
+| `button_text` | string | Optional CTA button label |
+| `button_link` | string | Optional CTA button URL |
+| `position` | string | Text overlay position (e.g. `center`, `left`) |
+| `show_text` | boolean | Toggle overlay text visibility |
+| `whatsapp_number` | string | Optional WhatsApp contact number |
+| `contact_email` | string | Optional contact email shown on the banner |
+| `contact_address` | string | Optional physical address |
+
+## Consultancy Requests
+
+Students and visitors can submit consultation requests through the platform. Admins review and advance each request through a simple status workflow.
+
+```
+GET   /admin/consultancies
+PATCH /admin/consultancies/{consultancyRequest}/status
+```
+
+**Status values:**
+
+| Value | Meaning |
+|---|---|
+| `pendiente` | New request, not yet reviewed |
+| `en_contacto` | Admin has made contact with the requester |
+| `cerrado` | Request resolved and closed |
+
+The index endpoint defaults to hiding `cerrado` requests to keep the list focused on open items. Pass `status=all` to see every record.
+
+The `updateStatus` body must include:
+```json
+{ "status": "en_contacto" }
+```
+
+## Company Settings
+
+Global platform settings — site name, contact information, and branding — are managed through the company settings form.
+
+```
+GET   /admin/settings/company
+PATCH /admin/settings/company
+```
+
+Changes are applied immediately via `SiteSettingsService::update()` and are reflected across all Inertia shared data on the next page load.
+
+## Subscription Plans
+
+Subscription plan pricing and metadata are stored in the `subscription_plans` table and cached via `PlanPricing`. Admins can adjust plan names, prices, and descriptions without a code deploy.
+
+```
+GET   /admin/settings/plans
+PATCH /admin/settings/plans/{subscriptionPlan}
+```
+
+The index endpoint returns all plans with their `id`, `slug`, `name`, `price`, `months`, `period_label`, `badge`, `description`, `features`, `sort_order`, and `is_active` fields. After any update, the `PlanPricing` cache is automatically cleared so new prices take effect immediately.

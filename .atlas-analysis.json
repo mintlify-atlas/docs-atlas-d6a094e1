@@ -1,0 +1,112 @@
+{
+  "projectType": "saas",
+  "projectName": "IEE Edu",
+  "projectDescription": "A full-stack e-learning platform for the Instituto de Economía y Empresa (IEE) built with Laravel 12, Inertia.js, and Vue 3, featuring course management, subscription plans, a virtual classroom, exams, certificates, and an admin dashboard.",
+  "theme": "almond",
+  "primaryColor": "#57572a",
+  "lightColor": "#e7e6ab",
+  "darkColor": "#1d1d00",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "deployment"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/roles-and-permissions",
+              "concepts/subscriptions",
+              "concepts/payments"
+            ]
+          },
+          {
+            "group": "Student Features",
+            "pages": [
+              "student/courses-and-enrollment",
+              "student/classroom",
+              "student/exams-and-certificates",
+              "student/publications",
+              "student/profile"
+            ]
+          },
+          {
+            "group": "Admin Panel",
+            "pages": [
+              "admin/dashboard",
+              "admin/user-management",
+              "admin/course-management",
+              "admin/content-management",
+              "admin/payment-management",
+              "admin/subscription-management"
+            ]
+          },
+          {
+            "group": "Configuration & Operations",
+            "pages": [
+              "configuration/environment",
+              "configuration/artisan-commands",
+              "configuration/scheduler",
+              "configuration/testing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Course catalog with categories, modules, lessons, and downloadable materials",
+    "Interactive virtual classroom with video lessons and lesson progress tracking",
+    "Subscription-based access model with Trimestral, Semestral, and Anual plans",
+    "Individual course and book purchase via payment proof (comprobante) upload",
+    "Final exams with configurable passing score and maximum attempt limits",
+    "PDF certificate generation upon course completion and exam approval",
+    "Admin dashboard with enrollment stats, revenue charts, and user management",
+    "Masterclass and live class support with permanent access after subscription ends",
+    "Consultancy request management with WhatsApp lead tracking",
+    "Role-based access control with admin and student roles"
+  ],
+  "publicApiSurface": [
+    "GET / — Home (welcome page with featured courses, books, banners)",
+    "GET /cursos — Public course catalog",
+    "GET /cursos/{slug} — Course detail page",
+    "GET /masterclass — Masterclass listing",
+    "GET /planes — Subscription plans page",
+    "GET /publicaciones — Publications (books & articles) catalog",
+    "GET /consultoria — Consultancy page",
+    "POST /consultoria/solicitud — Submit consultancy request (throttle: 5/min)",
+    "POST /api/leads/whatsapp — Track WhatsApp lead (throttle: 10/min)",
+    "GET /student/courses — Enrolled courses list",
+    "GET /student/classroom/{course}/{lesson?} — Virtual classroom",
+    "POST /student/classroom/progress — Update lesson progress",
+    "GET /student/exams — Available exams",
+    "POST /student/exams/{quiz}/submit — Submit exam answers",
+    "GET /student/certificates — Student certificates",
+    "GET /student/certificates/{certificate}/download — Download PDF certificate",
+    "GET /student/payments — Student payment history",
+    "POST /student/payments — Submit payment with comprobante",
+    "POST /student/subscriptions/payment — Submit subscription payment",
+    "GET /admin/dashboard — Admin dashboard with KPIs",
+    "GET /admin/dashboard/report — Download CSV/Excel report",
+    "GET/POST /admin/users — User CRUD",
+    "GET/POST /admin/courses — Course CRUD",
+    "GET/POST /admin/books — Book CRUD",
+    "GET/POST /admin/articles — Article CRUD",
+    "PATCH /admin/payments/{payment}/approve — Approve student payment",
+    "PATCH /admin/payments/{payment}/reject — Reject student payment",
+    "GET /admin/subscriptions — Subscription management",
+    "GET /admin/certificates — All issued certificates",
+    "GET /admin/consultancies — Consultancy request management",
+    "php artisan iie:make-admin {email} — Create or promote admin user",
+    "php artisan subscriptions:sync-expired — Expire overdue subscriptions and revoke access",
+    "php artisan subscriptions:sync-access — Sync all user subscription access"
+  ]
+}

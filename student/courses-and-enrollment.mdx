@@ -1,0 +1,124 @@
+---
+title: "Browsing Courses and Enrolling as a Student"
+sidebarTitle: "Courses & Enrollment"
+description: "How students browse the IEE Edu course catalog, enroll in free courses, purchase paid courses, and access their enrolled course list."
+---
+
+IEE Edu organizes its learning content into a searchable catalog that students can explore from both the public website and their authenticated dashboard. Once a student finds a course of interest, they can enroll immediately if it is free, or initiate a payment flow for paid content. All active enrollments are then accessible from the **My Courses** section of the dashboard.
+
+## Course Types
+
+IEE Edu supports several course formats distinguished by the `type` field on the `Course` model:
+
+<CardGroup cols={2}>
+  <Card title="Regular Courses" icon="graduation-cap">
+    Standard recorded or live courses (`type: grabado` or `type: en vivo`). These make up the core of the catalog and can be free or paid.
+  </Card>
+  <Card title="Masterclasses & Events" icon="calendar-star">
+    Short-format sessions and live events (`type: evento` or `type: masterclass`). Access to these is **retained permanently** even after a subscription expires — see `retainsAccessAfterSubscriptionEnds()`.
+  </Card>
+  <Card title="Free Courses" icon="circle-check">
+    Any course where the effective price resolves to `0` (both `price` and `sale_price` are zero). Students can self-enroll instantly without a payment step.
+  </Card>
+  <Card title="Paid Courses" icon="credit-card">
+    Courses with a positive `price` or `sale_price`. Students must complete a payment — either an individual purchase or through an active subscription plan — before gaining classroom access.
+  </Card>
+</CardGroup>
+
+The effective price of any course is resolved by `Course::effectivePrice()`, which returns `sale_price` when it is greater than `0`, otherwise falls back to `price`.
+
+## Public Catalog Routes
+
+These routes are publicly accessible without authentication, allowing prospective students to browse available offerings:
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/cursos` | Main course catalog for all regular courses |
+| `GET` | `/masterclass` | Dedicated listing page for masterclasses and events |
+| `GET` | `/cursos/{slug}` | Individual course detail page (uses slug binding) |
+
+## Student Catalog Routes
+
+Authenticated students have access to a dashboard version of the catalog that filters out courses they are already enrolled in and shows their subscription status:
+
+| Method | Route | Name | Description |
+|--------|-------|------|-------------|
+| `GET` | `/student/explore/courses` | `student.explore.courses` | Explore regular courses not yet enrolled in; supports `search`, `modality`, and `category` filters |
+| `GET` | `/student/explore/masterclass` | `student.explore.masterclasses` | Browse masterclasses and events filtered by category |
+
+The explore endpoint for courses paginates results (6 per page) and passes `hasActiveSubscription` to the frontend so the UI can display contextual CTAs.
+
+```http
+GET /student/explore/courses?search=finanzas&modality=Grabado&category=Economía
+```
+
+Supported `modality` values: `Grabado`, `En vivo`, `Evento`.
+
+## Free Enrollment
+
+Students can enroll in any free course with a single POST request. The controller validates that the effective price is truly `0` before creating an enrollment record:
+
+```http
+POST /student/courses/{course:slug}/enroll-free
+```
+
+**Route name:** `student.courses.enroll-free`
+
+The backend logic in `CourseController::enrollFree()` performs two checks before creating the enrollment:
+
+1. **Price validation** — rejects the request if `effectivePrice() > 0`.
+2. **Duplicate check** — if a non-subscription enrollment already exists, the student is redirected straight to the classroom without creating a duplicate record.
+
+On success the student is redirected to `GET /student/classroom/{slug}`.
+
+## Paid Enrollment
+
+Paid courses require a payment to be submitted and approved before enrollment is activated. The payment flow involves:
+
+1. Submitting a `POST /student/payments` request with a `course_id` and an optional `comprobante` (proof of payment image).
+2. An admin reviews and approves the payment in the back-office.
+3. `PaymentService::approve()` creates the enrollment record once the payment status reaches `aprobado`.
+
+For subscription-based access, students can purchase a membership plan via `POST /student/subscriptions/payment`, which unlocks access to all eligible courses automatically.
+
+<Note>
+  See the **Payments** section of the student documentation for full details on the individual purchase flow, comprobante upload, and subscription plan pricing.
+</Note>
+
+## My Courses
+
+The enrolled course list is available at:
+
+```http
+GET /student/courses
+```
+
+**Route name:** `student.courses.index`
+
+`CourseController::courses()` returns all **visible** enrollments for the authenticated student — meaning only enrollments that satisfy the `Enrollment::scopeVisible()` scope:
+
+- Enrollments where `subscription_granted = false` (individual purchase or free enroll) — always visible.
+- Enrollments where `subscription_granted = true` **and** `subscription_active = true` — visible only while the subscription is active.
+
+The response includes per-course progress calculated in batch by `ProgressService::getBatchProgress()` to avoid N+1 queries. Progress is synced back to the `enrollments` table if the stored value has drifted from the calculated value.
+
+## Enrollment Model
+
+Each enrollment record in the `enrollments` table carries the following key fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_id` | integer | The enrolled student |
+| `course_id` | integer | The course being enrolled in |
+| `payment_id` | integer\|null | Linked payment record for individual purchases |
+| `enrolled_at` | datetime | Timestamp of enrollment creation |
+| `progress` | integer | Percentage of lessons completed (0–100) |
+| `completed_at` | datetime\|null | Set when progress reaches 100% (no quiz) or exam is passed |
+| `passed` | boolean | Whether the student passed the final exam |
+| `last_lesson_id` | integer\|null | ID of the last lesson accessed, used for classroom resume |
+| `subscription_granted` | boolean | `true` if this enrollment was created by a subscription sync |
+| `subscription_active` | boolean | Mirrors the student's current subscription status |
+
+<Note>
+  **Subscription vs. individual access:** When `subscription_granted = true`, the enrollment is considered a "subscription seat." If the student's subscription expires, `subscription_active` is set to `false` and the enrollment disappears from the visible scope — the student loses classroom access. Enrollments created via individual purchase or free enroll have `subscription_granted = false` and are permanent regardless of subscription status. Masterclass/event enrollments (`retainsAccessAfterSubscriptionEnds() = true`) are always converted to `subscription_granted = false`, making them permanent.
+</Note>

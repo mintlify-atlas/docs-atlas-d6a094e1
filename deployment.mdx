@@ -1,0 +1,139 @@
+---
+title: "Deploy IEE Edu to Production"
+sidebarTitle: "Deployment"
+description: "Production deployment guide for IEE Edu: dependencies, environment variables, queue workers, scheduler setup, and post-deploy smoke tests."
+---
+
+This guide covers everything needed to move IEE Edu from a development environment into a production server — from installing optimized dependencies and compiling frontend assets to configuring the queue worker, setting up the Laravel scheduler for subscription expiry, and verifying the deployment with a smoke test checklist.
+
+<Note>
+  The fastest way to deploy and scale IEE Edu in production is [Laravel Cloud](https://cloud.laravel.com/). It handles server provisioning, zero-downtime deploys, queue workers, and the scheduler automatically, so you can skip the manual steps below.
+</Note>
+
+<Warning>
+  Never set `APP_DEBUG=true` in a production environment. Doing so exposes full stack traces — including environment variable values and file paths — to anyone who triggers an error in the browser.
+</Warning>
+
+## Deployment Steps
+
+<Steps>
+  <Step title="Install dependencies">
+    Install Composer packages with the autoloader optimized and development dependencies excluded. Then install Node packages needed to compile frontend assets.
+
+    ```bash
+    composer install --optimize-autoloader --no-dev
+    npm install
+    ```
+  </Step>
+
+  <Step title="Build frontend assets">
+    Compile and fingerprint all Vue components, Tailwind styles, and JavaScript bundles for production using Vite.
+
+    ```bash
+    npm run build
+    ```
+
+    The output lands in `public/build/` and the Vite manifest is written to `public/build/manifest.json`, which Laravel uses to resolve hashed asset filenames at runtime.
+  </Step>
+
+  <Step title="Configure the production environment">
+    Create or update your `.env` file on the server with production values. At minimum, set the following variables:
+
+    ```env
+    APP_ENV=production
+    APP_DEBUG=false
+    APP_URL=https://tu-dominio.com
+
+    IIE_WHATSAPP_SALES=...
+    IIE_WHATSAPP_SUPPORT=...
+    IIE_PLAN_TRIMESTRAL_PRICE=350
+    IIE_PLAN_SEMESTRAL_PRICE=600
+    IIE_PLAN_ANUAL_PRICE=990
+    ```
+
+    Also configure the database connection. The default development configuration uses SQLite; for production a managed MySQL or PostgreSQL instance is recommended:
+
+    ```env
+    DB_CONNECTION=mysql
+    DB_HOST=127.0.0.1
+    DB_PORT=3306
+    DB_DATABASE=iee_edu
+    DB_USERNAME=your_db_user
+    DB_PASSWORD=your_db_password
+    ```
+  </Step>
+
+  <Step title="Configure mail and queues">
+    Notifications (subscription approvals, email verification, password resets) are dispatched through the queue. Both the mailer and the queue driver must be configured before going live.
+
+    ```env
+    MAIL_MAILER=smtp
+    MAIL_HOST=...
+    MAIL_PORT=...
+    MAIL_USERNAME=...
+    MAIL_PASSWORD=...
+    MAIL_FROM_ADDRESS=...
+    MAIL_FROM_NAME="Instituto IEE"
+
+    QUEUE_CONNECTION=database
+    ```
+
+    Start a persistent queue worker on the server (managed via Supervisor or your process manager of choice):
+
+    ```bash
+    php artisan queue:work --tries=3
+    ```
+  </Step>
+
+  <Step title="Run migrations and optimize caches">
+    Apply any pending database migrations with the `--force` flag (required when `APP_ENV=production`), then clear stale caches and rebuild all Laravel optimization caches in one sequence.
+
+    ```bash
+    php artisan migrate --force
+    php artisan optimize:clear
+    php artisan optimize
+    php artisan view:cache
+    php artisan event:cache
+    ```
+
+    | Command | Effect |
+    |---|---|
+    | `migrate --force` | Runs migrations without interactive confirmation |
+    | `optimize:clear` | Clears config, route, view, and event caches |
+    | `optimize` | Rebuilds config and route caches |
+    | `view:cache` | Pre-compiles all Blade views |
+    | `event:cache` | Pre-caches all event→listener mappings |
+  </Step>
+
+  <Step title="Set up the storage symlink">
+    If the application stores or serves user-uploaded files (payment vouchers, certificates) from `storage/app/public`, create the public symlink so they are accessible via the web server.
+
+    ```bash
+    php artisan storage:link
+    ```
+  </Step>
+
+  <Step title="Configure the scheduler">
+    The `subscriptions:sync-expired` command runs on a schedule to automatically revoke classroom access when a student's membership period ends. Register Laravel's scheduler in the server crontab to run every minute:
+
+    ```bash
+    * * * * * cd /ruta/al/proyecto && php artisan schedule:run >> /dev/null 2>&1
+    ```
+
+    You can trigger the command manually at any time to verify it works independently of the cron:
+
+    ```bash
+    php artisan subscriptions:sync-expired
+    ```
+  </Step>
+
+  <Step title="Run the smoke test checklist">
+    After every production deploy, verify the critical user flows before announcing availability.
+
+    - [ ] Log in as an admin user and as a student user
+    - [ ] Navigate to `/planes` and submit a membership request
+    - [ ] Approve a payment proof in the admin dashboard and confirm the student gains classroom access
+    - [ ] Run the automated test suite in CI or on a staging server: `php artisan test --compact`
+    - [ ] If `MAIL_MAILER` is configured, trigger an email verification flow and confirm delivery (`MustVerifyEmail`)
+  </Step>
+</Steps>

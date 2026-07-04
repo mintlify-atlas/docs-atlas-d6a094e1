@@ -1,0 +1,65 @@
+---
+title: "IEE Edu: Learning Management System for IEE"
+sidebarTitle: "Introduction"
+description: "IEE Edu is a full-stack LMS built with Laravel 12, Inertia.js, and Vue 3, powering courses, subscriptions, classrooms, exams, and certificates for IEE."
+---
+
+IEE Edu is the official e-learning platform of the Instituto de Economía y Empresa (IEE), designed to deliver structured online education to students across Peru and beyond. It provides a unified environment where learners can browse the course catalog, enroll via a subscription plan, attend virtual classrooms, sit exams, and download certificates — all from a single web application managed by the IEE administrative team.
+
+## What is IEE Edu?
+
+IEE Edu is a purpose-built Learning Management System (LMS) tailored to the operational needs of IEE. The platform handles the full student lifecycle: discovery of available courses and publications, plan-based membership purchases with manual payment proof upload, access to gated virtual classrooms and course materials, proctored online exams with configurable passing scores and attempt limits, and automated certificate generation upon successful completion. Administrators manage enrollment approvals, subscription statuses, exam configuration, and institutional publications — all through a dedicated admin dashboard.
+
+## Technology Stack
+
+| Layer | Technology | Version |
+|---|---|---|
+| Backend Framework | Laravel | 12 (PHP 8.2+) |
+| Server-to-Client Bridge | Inertia.js | v2 |
+| Frontend Framework | Vue | 3 |
+| Styling | Tailwind CSS | v3 |
+| Frontend Bundler | Vite | v6 |
+| Routing (client-side) | Ziggy | v2 |
+| PDF Generation | Spatie Laravel PDF / DomPDF | — |
+| Testing | Pest | v3 |
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Course Catalog" icon="book-open">
+    Browse all available IEE courses with descriptions, requirements, and enrollment options. Courses are gated behind subscription plans.
+  </Card>
+  <Card title="Virtual Classroom" icon="chalkboard-teacher">
+    Enrolled students access dedicated classroom spaces with course materials, lessons, and downloadable resources.
+  </Card>
+  <Card title="Subscription Plans" icon="credit-card">
+    Three membership tiers — Trimestral (S/ 350), Semestral (S/ 600), and Anual (S/ 990) — unlock full platform access for the subscription period.
+  </Card>
+  <Card title="Payment Proof Upload" icon="receipt">
+    Students upload payment vouchers directly in the app. Admins review and approve or reject each submission to activate the membership.
+  </Card>
+  <Card title="Exams & Certificates" icon="file-certificate">
+    Configurable exams with a passing score threshold (default 14) and maximum attempts (default 3). Passing students receive a generated PDF certificate.
+  </Card>
+  <Card title="Admin Dashboard" icon="layout-dashboard">
+    Full administrative control over users, subscriptions, course content, exam results, and platform settings through a protected admin area.
+  </Card>
+  <Card title="Publications" icon="newspaper">
+    IEE books and articles are published and browsable on the platform, supporting the institution's research and knowledge-sharing mission.
+  </Card>
+  <Card title="Consultancy Requests" icon="messages">
+    Students and visitors can submit consultancy or advisory requests directly through the platform, routed to the IEE team via WhatsApp or email notifications.
+  </Card>
+</CardGroup>
+
+## User Roles
+
+IEE Edu defines two primary roles, enforced at the server level in every Laravel controller:
+
+- **Admin** — Full access to the admin dashboard, user management, subscription approvals, course creation and editing, exam configuration, certificate management, publications, and consultancy request handling. Admin accounts are created via the `iie:make-admin` Artisan command.
+
+- **Student** — Access to the public course catalog, personal subscription and payment management, enrolled virtual classrooms, exams, and certificate downloads. Students self-register and gain classroom access only after their subscription payment is approved by an admin.
+
+## Architecture Overview
+
+IEE Edu is a **Single-Page Application (SPA)** built on the Inertia.js protocol. There are no full browser page refreshes after the initial load: navigation between pages is handled by Inertia's client-side router, which swaps Vue page components in place. The server side uses standard Laravel controllers that return `Inertia::render()` responses instead of Blade views, passing typed PHP data as props directly into Vue components. Route generation on the frontend is handled by Ziggy, which exposes all named Laravel routes as a JavaScript object, keeping URL definitions in a single authoritative place (Laravel's route files). The frontend entry point (`resources/js/app.ts`) is bundled by Vite with the `laravel-vite-plugin`, enabling Hot Module Replacement during development and optimized asset hashing for production builds.

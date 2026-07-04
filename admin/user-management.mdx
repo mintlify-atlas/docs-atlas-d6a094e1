@@ -1,0 +1,137 @@
+---
+title: "Managing Users and Enrollments in the Admin Panel"
+sidebarTitle: "User Management"
+description: "Admins can create, search, update, and deactivate students. Manually assign courses, export user lists, and view individual student details."
+---
+
+The IEE Edu user management panel gives administrators full control over every account on the platform. From a single interface, you can create new students, search and filter the user list, toggle account status, manually enroll a student in any published course, and export the entire user base to a CSV file for offline analysis.
+
+## User List
+
+Retrieve a paginated list of all users. Supports optional query-string filters for `role`, `status`, and `search`. The response also includes enrollment counts (`enrollments_count`) for each user and a summary `stats` object with platform-wide totals.
+
+```
+GET /admin/users
+```
+
+| Query parameter | Values | Description |
+|---|---|---|
+| `search` | string | Filter by name or email (partial match) |
+| `role` | `admin` \| `usuario` | Filter by account role |
+| `status` | `activo` \| `inactivo` | Filter by account status |
+| `per_page` | `10` \| `20` \| `50` | Results per page (default `20`) |
+
+## User Search (AJAX)
+
+A lightweight AJAX endpoint that returns up to 10 active users whose name or email matches the query. Used internally by the payment creation modal but available for any UI component.
+
+```
+GET /admin/users-search?q={query}
+```
+
+Requires at least 2 characters. Returns a JSON array of `{ id, name, email }` objects.
+
+## User Detail
+
+Fetch full details for a single user, including their complete enrollment history (with course title, image, and type), payment history, and a list of all published courses that can be assigned.
+
+```
+GET /admin/users/{user}
+```
+
+The response includes:
+- `user` — full user record with loaded `enrollments` and `payments` relationships
+- `enrolledIds` — array of `course_id` values the user is already enrolled in
+- `availableCourses` — all published courses available for manual assignment
+
+## Create User
+
+```
+POST /admin/users
+```
+
+Validated fields mirror the `User` model's fillable attributes:
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | Required |
+| `email` | string | Required, unique |
+| `password` | string | Required |
+| `telefono` | string | Optional phone number |
+| `role` | `admin` \| `usuario` | Defaults to `usuario` (student) |
+| `status` | `activo` \| `inactivo` | Defaults to `activo` |
+| `avatar` | string | Optional avatar URL |
+
+## Update User
+
+```
+PATCH /admin/users/{user}
+```
+
+Accepts the same fields as `POST /admin/users`. The admin's own account is protected by a `UserPolicy` that prevents self-demotion or self-deactivation.
+
+## Toggle Status
+
+Flip a user's `status` between `activo` and `inactivo` with a single request. No body is required.
+
+```
+PATCH /admin/users/{user}/toggle-status
+```
+
+<Warning>
+  Deactivating a user (`status = inactivo`) does not immediately terminate active sessions. However, the `CheckUserStatus` middleware is applied on every authenticated request — the user will be logged out and blocked from logging back in as soon as the status is set to `inactivo`. Use this to quickly suspend access without deleting any records.
+</Warning>
+
+## Assign Course
+
+Manually enroll a user in a published course, bypassing the payment flow. Useful for complimentary access or admin-granted scholarships.
+
+```
+POST /admin/users/{user}/assign-course
+```
+
+| Body field | Type | Description |
+|---|---|---|
+| `course_id` | integer | ID of the published course to assign |
+
+The server verifies:
+1. The course exists and has `status = PUBLICADO`.
+2. The user does not already have permanent access to that course.
+
+If the user is already enrolled, the request returns an error without creating a duplicate enrollment.
+
+## Export Users
+
+Download a UTF-8 CSV file of all users matching the current filters. The file is named `usuarios-iee-YYYYMMDD.csv` and includes the following columns:
+
+```
+Nombre, Email, Teléfono, Rol, Estado, Cursos Inscritos, Fecha Registro
+```
+
+```
+GET /admin/users-export
+```
+
+The same `search`, `role`, and `status` query parameters accepted by the list endpoint are respected here, so you can export a filtered subset.
+
+## Delete User
+
+```
+DELETE /admin/users/{user}
+```
+
+This is a **soft delete** — it sets the user's `status` to `inactivo` rather than removing the record from the database. All enrollments, payments, and certificates associated with the user are preserved.
+
+## User Fields Reference
+
+| Field | Type | Values / Notes |
+|---|---|---|
+| `id` | integer | Auto-increment primary key |
+| `name` | string | Full name |
+| `email` | string | Unique, used for login |
+| `telefono` | string | Optional phone number |
+| `role` | enum | `admin` or `usuario` (student) |
+| `status` | enum | `activo` or `inactivo` |
+| `avatar` | string | Optional URL to profile image |
+| `email_verified_at` | timestamp | Set when email is verified |
+| `created_at` | timestamp | Account registration date |

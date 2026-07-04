@@ -1,0 +1,320 @@
+---
+title: "Testing IEE Edu: Pest Tests and Manual Verification"
+sidebarTitle: "Testing"
+description: "Run the Pest test suite with php artisan test --compact. Key test scenarios for payments, subscriptions, comments, and classroom access."
+---
+
+IEE Edu's test suite is powered by **Pest v3** (`pestphp/pest ^3.8`) with the `pestphp/pest-plugin-laravel ^3.2` adapter. Tests run against an in-memory SQLite database with the queue set to `sync`, mail set to `array`, and cache set to `array` — so the full application can be exercised without any external services. All test environment overrides are declared in `phpunit.xml`.
+
+---
+
+## Running Tests
+
+### Full suite
+
+```bash
+php artisan test --compact
+```
+
+The `--compact` flag produces a condensed single-line output per test, making it easier to spot failures at a glance in CI logs.
+
+### Filter to a specific test class or method
+
+```bash
+# Run only payment-related tests
+php artisan test --compact --filter=PaymentTest
+
+# Run a single test method by name
+php artisan test --compact --filter="a_student_cannot_comment_without_enrollment"
+
+# Run the entire Feature suite
+php artisan test --testsuite=Feature
+```
+
+<Tip>
+  Use `--filter=` with a partial string — Pest will match any test whose class name or method name contains that substring. This lets you quickly re-run a single scenario while iterating on a fix without waiting for the full suite.
+</Tip>
+
+---
+
+## Test Structure
+
+Tests are organized into two suites as defined in `phpunit.xml`:
+
+| Suite | Directory | Purpose |
+|---|---|---|
+| **Unit** | `tests/Unit/` | Isolated tests for individual classes, services, and helpers with no HTTP or database interaction. |
+| **Feature** | `tests/Feature/` | Full HTTP request-cycle tests that boot the application, hit routes, and assert against the database and response. |
+
+The `app/` directory is included as the source for code coverage analysis. To generate a coverage report, add `--coverage` to any test command (requires Xdebug or PCOV).
+
+---
+
+## Test Environment (phpunit.xml)
+
+The following environment variables are automatically applied during every test run, overriding whatever is in your `.env` file:
+
+| Variable | Test Value | Reason |
+|---|---|---|
+| `APP_ENV` | `testing` | Disables production-only guards and enables test helpers. |
+| `DB_CONNECTION` | `sqlite` | Lightweight driver for fast test execution. |
+| `DB_DATABASE` | `:memory:` | Fresh in-memory database per test run — no leftovers between runs. |
+| `CACHE_STORE` | `array` | Prevents test cache pollution; resets automatically each run. |
+| `QUEUE_CONNECTION` | `sync` | Jobs execute immediately inline rather than being queued. |
+| `MAIL_MAILER` | `array` | Captures outgoing emails in memory for assertion without sending. |
+| `SESSION_DRIVER` | `array` | In-memory session storage; no database writes needed. |
+| `BCRYPT_ROUNDS` | `4` | Reduces password hashing cost so user factories run fast. |
+| `TELESCOPE_ENABLED` | `false` | Prevents Telescope from recording during tests. |
+| `PULSE_ENABLED` | `false` | Prevents Pulse from recording metrics during tests. |
+
+---
+
+## Key Test Scenarios
+
+The following twelve scenarios cover the most critical fixes and performance improvements in the platform. Each scenario includes the affected file, the exact manual verification steps, and what a passing result looks like.
+
+<AccordionGroup>
+  <Accordion title="1. WhatsApp Lead API Route — POST /api/leads/whatsapp" icon="route">
+    **Affected file:** `routes/web.php`
+
+    Verifies that the `POST /api/leads/whatsapp` route exists and correctly persists a lead record to the `whatsapp_leads` table when called by an authenticated user.
+
+    **Manual steps:**
+    1. Log in as a regular student.
+    2. Add a course to the cart.
+    3. Open **DevTools → Network**.
+    4. Click **"Enviar por WhatsApp"**.
+    5. Confirm the Network tab shows `POST /api/leads/whatsapp` with **HTTP 200**.
+    6. Check the `whatsapp_leads` table to confirm the record was saved.
+
+    **Passing result:** The request returns `200`, no `500` error appears, and a new row exists in `whatsapp_leads`.
+  </Accordion>
+
+  <Accordion title="2. Consultancy Rate Limiting — 5 req/min" icon="shield">
+    **Affected file:** `routes/web.php`
+
+    Verifies that the consultancy form is rate-limited to 5 requests per minute per IP. The 6th submission within the same minute must be rejected.
+
+    **Manual steps:**
+    1. Visit `/consultoria` without logging in.
+    2. Submit the form 6 times as fast as possible.
+    3. Confirm the **6th submission** returns **HTTP 429 Too Many Requests**.
+
+    **Passing result:** Submissions 1–5 succeed; submission 6 receives a 429 response.
+  </Accordion>
+
+  <Accordion title="3. Comment Authorization — Enrollment Check" icon="lock">
+    **Affected file:** `app/Http/Controllers/Student/LessonCommentController.php`
+
+    Verifies that a student cannot post a comment on a lesson belonging to a course they are not enrolled in.
+
+    **Manual steps:**
+    1. Log in as **User A** (enrolled in Course X, not Course Y).
+    2. Send `POST /student/comments/{lesson_from_course_Y}` with a comment body.
+    3. Confirm the response is **HTTP 403 Forbidden**.
+    4. Verify no comment row was created in the database for that lesson.
+
+    **Passing result:** The request is rejected with 403 and the database remains unchanged.
+  </Accordion>
+
+  <Accordion title="4. Nullable User in WhatsApp Leads" icon="user-slash">
+    **Affected file:** `app/Http/Controllers/WhatsappLeadController.php`
+
+    Verifies that the WhatsApp lead endpoint does not crash when called by an unauthenticated visitor. The `user_id` column is nullable and must be stored as `null` rather than causing a 500 error.
+
+    **Manual steps:**
+    1. Log out completely.
+    2. Send `POST /api/leads/whatsapp` with a valid JSON payload (course name, plan, etc.).
+    3. Confirm the response is **not** HTTP 500.
+    4. Check `whatsapp_leads` — the new row should have `user_id = null`.
+
+    **Passing result:** Request completes successfully (2xx) and the lead row is saved with `user_id = null`.
+  </Accordion>
+
+  <Accordion title="5. Admin Dashboard — N+1 Query Fix" icon="gauge-high">
+    **Affected file:** `app/Http/Controllers/Admin/DashboardController.php`
+
+    Verifies that the admin dashboard executes approximately 4 grouped queries instead of ~30 individual `SUM` queries for its chart data.
+
+    **Manual steps:**
+    1. Log in as an admin.
+    2. Navigate to `/admin/dashboard`.
+    3. Open **Laravel Telescope** (or check `storage/logs/laravel.log`).
+    4. Confirm there is **1 query per chart** (weekly, monthly, quarterly) using `GROUP BY` rather than multiple separate `SUM` statements.
+    5. Verify the dashboard loads noticeably faster with a large payments dataset.
+
+    **Passing result:** Each chart uses a single grouped query; total queries on page load is ~4.
+  </Accordion>
+
+  <Accordion title="6. Course Editor Eager Loading Fix" icon="circle-notch">
+    **Affected file:** `app/Http/Controllers/Admin/CourseController.php`
+
+    Verifies that the `'quizzes.attempts.user'` relation is no longer eager-loaded on the course edit page, preventing memory exhaustion and timeouts on courses with many students.
+
+    **Manual steps:**
+    1. Log in as an admin.
+    2. Navigate to the edit page for a course with 500+ enrolled students.
+    3. Confirm the page loads **without timeout**.
+    4. In Telescope, verify that the `quiz_attempts` table is **not** queried on this page load.
+
+    **Passing result:** Page loads within a normal response time; no `quiz_attempts` query appears in the log.
+  </Accordion>
+
+  <Accordion title="7. Explore Pagination — Books & Articles" icon="books">
+    **Affected file:** `app/Http/Controllers/Student/DashboardController.php`
+
+    Verifies that the publications explore page uses `paginate(12)` instead of `all()`, returning only 12 items per page regardless of the total number of records.
+
+    **Manual steps:**
+    1. Log in as a student.
+    2. Navigate to `/student/explore/publications`.
+    3. Confirm pagination controls appear and only **12 items** are shown on the first page.
+    4. Verify fast load time even if there are 1,000+ books in the database.
+
+    **Passing result:** The page renders 12 items with working pagination; the query uses `LIMIT 12 OFFSET 0`.
+  </Accordion>
+
+  <Accordion title="8. Classroom setInterval Memory Leak Fix" icon="memory">
+    **Affected file:** `resources/js/pages/student/Classroom.vue`
+
+    Verifies that the `setInterval` used to update the current time display in the classroom is properly cleared when the component is unmounted, preventing a memory leak during navigation.
+
+    **Manual steps:**
+    1. Open the classroom for any course.
+    2. Navigate away to a different page (e.g., the student dashboard).
+    3. In **DevTools → Performance → Memory**, take a heap snapshot before and after navigation.
+    4. Confirm there are no lingering `Classroom.vue` component instances in the heap after unmounting.
+
+    **Passing result:** The `onUnmounted` hook clears the interval; no `Classroom.vue` instances appear in the post-navigation heap snapshot.
+  </Accordion>
+
+  <Accordion title="9. Centralized TypeScript Types" icon="code">
+    **Affected file:** `resources/js/types/course.ts`
+
+    Verifies that the centralized TypeScript interface file compiles without errors and that the frontend build succeeds end-to-end.
+
+    **Manual steps:**
+    ```bash
+    npm run build
+    ```
+    Confirm the build completes with **no TypeScript errors** in the output.
+
+    **Passing result:** `npm run build` exits with code 0 and no type errors are reported in the Vite output.
+  </Accordion>
+
+  <Accordion title="10. CourseController Str Import Fix" icon="wrench">
+    **Affected file:** `app/Http/Controllers/Admin/CourseController.php`
+
+    Verifies that `use Illuminate\Support\Str;` is explicitly imported in `CourseController`, fixing course duplication which uses `Str::slug()` to generate a unique slug.
+
+    **Manual steps:**
+    1. Log in as an admin.
+    2. Navigate to any course and click **Duplicar** (Duplicate).
+    3. Confirm the duplicate course is created with a **unique slug**.
+    4. Confirm no `Class "Str" not found` PHP error appears.
+
+    **Passing result:** The duplicate course is created successfully with a unique, slugified title.
+  </Accordion>
+
+  <Accordion title="11. Dashboard Caching — Admin & Student" icon="clock">
+    **Affected files:** `Admin/DashboardController.php`, `Student/DashboardController.php`
+
+    Verifies that dashboard statistics are cached (5 minutes for admin, 1 minute for student) and that repeated page loads do not re-execute the stats queries.
+
+    **Manual steps:**
+    1. Navigate to the admin dashboard.
+    2. Reload the page 3–4 times.
+    3. In **Telescope**, confirm that only the **first load** executes the stats queries; subsequent reloads serve the cached result with no new queries.
+    4. Wait 5 minutes and reload — queries should execute again to refresh the cache.
+
+    **Passing result:** Stats queries fire once per cache TTL window, not on every page load.
+  </Accordion>
+
+  <Accordion title="12. PublicCourseController SELECT Optimization" icon="database">
+    **Affected file:** `app/Http/Controllers/PublicCourseController.php`
+
+    Verifies that the public course listing queries only the columns actually needed (explicit `SELECT`) rather than fetching all columns with `SELECT *`, reducing both query execution time and Inertia payload size.
+
+    **Manual steps:**
+    1. Visit the homepage `/`.
+    2. In **Telescope**, open the query for `courses` and confirm it has an **explicit `SELECT` column list** rather than `SELECT *`.
+    3. In **DevTools → Network**, inspect the Inertia JSON payload and confirm the course objects contain only the expected subset of fields.
+
+    **Passing result:** The courses query uses an explicit `SELECT`; the Inertia JSON payload is visibly smaller than before the optimization.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Frontend Build Verification
+
+After any change to Vue components, TypeScript types, or Tailwind configuration, verify the frontend compiles cleanly:
+
+```bash
+npm run build
+```
+
+A successful build outputs Vite's asset manifest and exits with code 0. TypeScript errors, missing imports, and invalid template syntax will all cause the build to fail with a non-zero exit code.
+
+---
+
+## Route Verification
+
+After adding or modifying routes, confirm the full route list is consistent and no conflicts exist:
+
+```bash
+php artisan route:list --except-vendor
+```
+
+This lists every application-defined route with its URI, HTTP method, controller action, and middleware stack. Pipe to `grep` to narrow down:
+
+```bash
+# Check all subscription-related routes
+php artisan route:list --except-vendor | grep subscription
+
+# Check all API routes
+php artisan route:list --except-vendor | grep api
+```
+
+---
+
+## Post-Deploy Smoke Test
+
+After every production deployment, run through the following checklist to verify the application is functioning end-to-end. This checklist is drawn directly from `DEPLOY.md`.
+
+<Steps>
+  <Step title="Authentication">
+    Log in as both an **admin** user and a **student** user to confirm session handling and role-based redirects are working.
+  </Step>
+  <Step title="Plans page">
+    Visit `/planes` and confirm subscription plan pricing cards are rendered with the correct prices from `IIE_PLAN_TRIMESTRAL_PRICE`, `IIE_PLAN_SEMESTRAL_PRICE`, and `IIE_PLAN_ANUAL_PRICE`.
+  </Step>
+  <Step title="Payment → classroom access flow">
+    Approve a test payment for a course in the admin panel and verify the student immediately gains access to the course classroom.
+  </Step>
+  <Step title="Automated test suite">
+    Run the Pest suite on CI or staging:
+
+    ```bash
+    php artisan test --compact
+    ```
+
+    All tests must pass before promoting a build to production.
+  </Step>
+  <Step title="Email verification">
+    If `MAIL_MAILER` is configured (not `log`), register a new account and confirm the verification email is delivered and the verification link works correctly.
+  </Step>
+</Steps>
+
+---
+
+## Cache & Route Clearing
+
+After deploying new code, always clear and rebuild the application caches:
+
+```bash
+php artisan optimize:clear   # Clears config, route, view, and event caches
+php artisan optimize         # Re-caches config, routes, views, and events
+php artisan view:cache       # Pre-compiles all Blade views
+php artisan event:cache      # Caches event-listener mappings
+```

@@ -1,0 +1,112 @@
+---
+title: "Accessing Publications: Books and Articles"
+sidebarTitle: "Publications"
+description: "IEE Edu's publication library includes books (purchasable) and articles. Students browse, purchase, and download materials from the explore catalog."
+---
+
+IEE Edu maintains a publication library alongside its course catalog, offering institutional books and research articles produced by the Instituto de Economía y Empresa. Books may be free (digital download) or paid (physical delivery), while articles are always available for direct download after login. The publications section is accessible to all visitors on the public site and provides an enriched, access-aware view to authenticated students inside the dashboard.
+
+## Public Route
+
+The publications page is publicly visible without requiring a login, allowing prospective students and visitors to browse available titles:
+
+```http
+GET /publicaciones
+```
+
+This page lists both books and articles without access controls, showcasing titles, authors, cover images, and pricing.
+
+## Student Catalog
+
+Authenticated students access an enhanced version of the publications catalog from the dashboard:
+
+```http
+GET /student/explore/publications
+```
+
+**Route name:** `student.explore.publications`
+
+`CatalogController::explorePublications()` paginates both books and articles (6 per page each, using `books_page` and `articles_page` query parameters respectively) and enriches each book entry with the student's current payment status. Supports `search` filtering on `title`, `author` (books), and `media` (articles):
+
+```http
+GET /student/explore/publications?search=economia
+```
+
+Each book in the response carries these access-related fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `payment_status` | string\|null | Latest payment status: `pendiente`, `en_revision`, or `aprobado` |
+| `needs_comprobante` | boolean | `true` if a payment exists but no comprobante has been uploaded |
+| `has_pending_payment` | boolean | `true` if payment is `pendiente` or `en_revision` |
+| `has_approved_purchase` | boolean | `true` if an `aprobado` payment exists — grants download access |
+| `can_purchase` | boolean | `true` if the book is paid, in stock (or unlimited), and no payment has been made yet |
+| `is_out_of_stock` | boolean | `true` when stock is finite and has reached `0` |
+| `shipping` | object\|null | Populated when a `BookOrder` exists — includes `status`, `tracking_url`, `delivery_mode`, `pickup_location`, `carrier`, and `student_note` |
+
+## Books
+
+Books have two access modes depending on their price:
+
+### Free Books (Digital Download)
+
+Books with `price = 0` are available as direct downloads. The download route checks `file_path` on the `public` storage disk first, then falls back to an external `download_url`:
+
+```http
+GET /student/publications/books/{book}/download
+```
+
+**Route name:** `student.publications.books.download`
+
+`CatalogController::downloadBook()` records the download event via `BookDownloadService::record()` with type `"file"` (local) or `"external"` (redirect) before serving the file.
+
+### Paid Books (Physical Delivery)
+
+Paid books (`price > 0`) are delivered physically. Attempting to call the download route for a paid book returns a `403` error directing the student to check their order status in **Mis Pagos**. Students must instead express interest and coordinate delivery via WhatsApp.
+
+<Note>
+  A subscription plan does **not** grant access to paid books. Books require an individual purchase regardless of whether the student has an active subscription. The `has_approved_purchase` flag on the catalog response reflects this independent access check.
+</Note>
+
+## Book Purchase Interest
+
+For paid books, students initiate contact via WhatsApp rather than a self-service checkout:
+
+```http
+GET /student/publications/books/{book}/interest
+```
+
+**Route name:** `student.publications.books.interest`
+
+`CatalogController::bookPurchaseInterest()` does two things:
+
+1. Records a `"whatsapp"` interaction via `BookDownloadService::record()` for analytics.
+2. Redirects the student to a pre-filled WhatsApp message addressed to the IEE sales number (`IIE_WHATSAPP_SALES` from the environment), with the book title and price embedded:
+
+```
+Hola, estoy interesado en adquirir el material: *{title}* que tiene un costo de S/ {price}. ¿Me podrían brindar más información?
+```
+
+An admin then manages the resulting order in the back-office at `/admin/book-orders`, tracking delivery mode, shipping status, carrier, tracking URL, and any notes for the student.
+
+## Articles
+
+Articles are research papers and analyses published by IEE. Any authenticated student can download an article without a separate payment:
+
+```http
+GET /student/publications/articles/{article}/download
+```
+
+**Route name:** `student.publications.articles.download`
+
+`CatalogController::downloadArticle()` serves the file directly from `Storage::disk('public')` using `article->file_path`. If the file does not exist on disk, the route returns a `404` error.
+
+Each article in the catalog response includes:
+
+| Field | Description |
+|-------|-------------|
+| `title` | Article title |
+| `media` | Publication medium / category label (defaults to `"Análisis"` if not set) |
+| `published_at` | Publication date formatted as `Y-m-d` |
+| `thumbnail` | Cover thumbnail image path |
+| `download_url` | Direct external URL if hosted outside the platform |

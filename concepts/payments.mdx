@@ -1,0 +1,159 @@
+---
+title: "Payment Workflow: Comprobante Upload and Approval"
+sidebarTitle: "Payments"
+description: "IEE Edu uses a manual payment proof workflow. Students upload a comprobante; admins approve or reject it to grant course or subscription access."
+---
+
+IEE Edu does not integrate with an online payment gateway. Instead it uses a **manual bank transfer and proof-of-payment (comprobante) model**: students transfer the purchase amount to IEE's bank account, then upload a screenshot or image of the transfer receipt inside the platform. An admin reviews the comprobante and either approves or rejects the payment. On approval, the system automatically grants the appropriate access — enrolling the student in a course, fulfilling a book order, or activating a subscription plan. This approach is common in Latin American e-commerce markets where bank transfers are the dominant payment method.
+
+## Payment Types
+
+A single `Payment` record covers all three purchasable items. The type is inferred from which foreign key is populated:
+
+| Type | FK Field | On Approval |
+|---|---|---|
+| Course purchase | `course_id` is set | `EnrollmentService::enroll()` creates a permanent enrollment |
+| Book purchase | `book_id` is set | `BookOrderService::createForPayment()` creates a book order and decrements stock |
+| Subscription | `subscription_type` is set (`trimestral`, `semestral`, or `anual`) | A `Subscription` record is created/updated and `SubscriptionAccessService::sync()` grants course access |
+
+## Payment Model Fields
+
+The `Payment` model's fillable attributes are:
+
+```php
+// app/Models/Payment.php
+protected $fillable = [
+    'user_id',           // Owner of the payment
+    'course_id',         // Set for course purchases (nullable)
+    'book_id',           // Set for book purchases (nullable)
+    'subscription_type', // 'trimestral' | 'semestral' | 'anual' (nullable)
+    'status',            // Current status (see flow below)
+    'comprobante',       // File path of the uploaded proof image
+    'amount',            // Payment amount in local currency
+];
+```
+
+The model belongs to `User`, `Course`, and `Book`, and has one `BookOrder` via `bookOrder()`.
+
+## Payment Status Flow
+
+A payment moves through the following statuses:
+
+| Status | Meaning | Who Sets It |
+|---|---|---|
+| `pendiente` | Payment created, comprobante not yet uploaded | System (on creation) |
+| `en_revision` | Comprobante uploaded, awaiting admin review | Student (on comprobante upload) or admin (on revert) |
+| `aprobado` | Admin has verified the proof and granted access | Admin |
+| `rechazado` | Admin has rejected the proof | Admin |
+
+```
+pendiente → en_revision → aprobado
+                       ↘ rechazado
+aprobado  → en_revision  (via revert)
+```
+
+<Info>
+  Only payments in `pendiente` or `en_revision` status can be approved. Attempting to approve an already-approved payment throws a validation exception: `"Solo se pueden aprobar pagos pendientes o en revisión."`.
+</Info>
+
+## Student Workflow
+
+<Steps>
+  <Step title="Browse and initiate payment">
+    The student visits a course detail page or the public `/planes` page. They click the purchase or subscribe button, which redirects them to the payment initiation flow.
+  </Step>
+  <Step title="Create payment record">
+    The student submits the payment form. A `POST` request is sent to `student.payments.store`:
+    ```
+    POST /student/payments
+    ```
+    A `Payment` record is created with `status = 'pendiente'` and the relevant `course_id`, `book_id`, or `subscription_type` populated.
+  </Step>
+  <Step title="Upload comprobante">
+    After completing the bank transfer, the student uploads the proof-of-payment image:
+    ```
+    POST /student/payments/{payment}/comprobante
+    ```
+    The file is stored and the payment status moves to `en_revision`. The student can also view all their payment records at `GET /student/payments`.
+  </Step>
+  <Step title="Wait for admin review">
+    The student sees a pending status in their payment history. No access is granted until an admin approves the payment.
+  </Step>
+</Steps>
+
+## Admin Workflow
+
+<Steps>
+  <Step title="View payment queue">
+    The admin navigates to the payments list:
+    ```
+    GET /admin/payments
+    ```
+    Payments can be filtered by status. The admin sees the student name, payment type, amount, and comprobante thumbnail.
+  </Step>
+  <Step title="Review individual payment">
+    The admin opens a specific payment to inspect the comprobante in detail:
+    ```
+    GET /admin/payments/{payment}
+    ```
+  </Step>
+  <Step title="Approve or reject">
+    Based on the review, the admin takes one of two actions:
+
+    **Approve:**
+    ```
+    PATCH /admin/payments/{payment}/approve
+    ```
+    `PaymentService::approve()` sets `status = 'aprobado'`, then triggers the appropriate downstream action (enrollment, book order, or subscription activation). A `PaymentApprovedNotification` is sent to the student.
+
+    **Reject:**
+    ```
+    PATCH /admin/payments/{payment}/reject
+    ```
+    `PaymentService::reject()` sets `status = 'rechazado'` and sends a `PaymentRejectedNotification` to the student.
+  </Step>
+  <Step title="Access is granted automatically">
+    On approval, the system handles the full downstream workflow without further admin input:
+    - **Course** → enrollment created, student gains classroom access
+    - **Book** → book order created, stock decremented (if applicable)
+    - **Subscription** → `Subscription` record created/updated, `SubscriptionAccessService::sync()` enrolls student in all published courses
+  </Step>
+</Steps>
+
+## Reverting an Approval
+
+If an admin approved a payment in error, they can revert it:
+
+```
+PATCH /admin/payments/{payment}/revert
+```
+
+`PaymentService::revert()` only works on payments with `status = 'aprobado'`. It sets the status back to `en_revision` and undoes the access grant:
+
+| Payment Type | Revert Action |
+|---|---|
+| Course | Enrollment row is deleted (only the one tied to this `payment_id` and not subscription-granted) |
+| Subscription | If no other approved subscription payment exists, the `Subscription` is set to `cancelada` and `SubscriptionAccessService::sync()` revokes access |
+| Book | `BookOrderService::cancelForPayment()` cancels the order; stock is incremented if the book has limited stock |
+
+<Warning>
+  Reverting a subscription payment will cancel the student's subscription and immediately revoke their access to all subscription-granted courses. The student's progress is preserved, but they will lose the ability to continue lessons until a new subscription is approved.
+</Warning>
+
+## Exam Environment Variables
+
+Two environment variables control the behaviour of the exam system that gates course certificates:
+
+```env
+EDUCATION_PASSING_SCORE=14
+EDUCATION_MAX_ATTEMPTS=3
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `EDUCATION_PASSING_SCORE` | `14` | Minimum score a student must achieve to pass a quiz and unlock their certificate. |
+| `EDUCATION_MAX_ATTEMPTS` | `3` | Maximum number of times a student may attempt a quiz before being locked out. |
+
+<Note>
+  These variables apply globally to all courses. Per-course overrides are not currently supported. Adjust them in your `.env` file and restart the application for changes to take effect.
+</Note>

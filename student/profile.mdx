@@ -1,0 +1,125 @@
+---
+title: "Managing Your Student Profile"
+sidebarTitle: "Profile"
+description: "Students can update their name, phone number, and avatar on the IEE Edu profile page. View payment history and subscription status from the dashboard."
+---
+
+Every student on IEE Edu has a personal profile page where they can manage their display name, phone number, and avatar photo. The same area surfaces a summary of enrolled courses with progress indicators and the status of any active subscription plan. Payments and account-level settings (email, password) are available from dedicated sections linked from the profile.
+
+## Profile Page
+
+The student profile is accessed at:
+
+```http
+GET /student/perfil
+```
+
+**Route name:** `student.profile.index`
+
+`ProfileController::profile()` loads the authenticated user's visible enrollments with their linked courses and `lastLesson`, then calculates current progress for all enrolled courses in a single batch query (`ProgressService::getBatchProgress()`). Progress is synced back to the `enrollments` table if the stored value has drifted.
+
+The Inertia page receives:
+
+| Prop | Description |
+|------|-------------|
+| `enrolledCourses` | Array of enrolled courses with `title`, `slug`, `image`, `progress` (0–100), and `last_lesson` title |
+| `activeSubscription` | The current active `Subscription` model (status `active`, `end_date >= now()`), or `null` if none |
+
+## Updatable Fields
+
+Students can update the following fields from the profile form, handled by `UpdateProfileRequest`:
+
+| Field | Description |
+|-------|-------------|
+| `name` | Display name shown across the platform |
+| `telefono` | Phone number (used for WhatsApp contact and account identification) |
+| `avatar` | Profile photo — uploaded as a file and stored under `storage/app/public/avatars/` |
+
+Avatar uploads replace the previous image: the old file is deleted from `Storage::disk('public')` before the new one is saved via `$request->file('avatar')->store('avatars', 'public')`.
+
+## Update Endpoint
+
+Profile changes are submitted to:
+
+```http
+POST /student/perfil/update
+```
+
+**Route name:** `student.profile.custom.update`
+
+The same endpoint handles password changes. When the request includes a non-empty `password` field, only the password is updated (hashed with `Hash::make()`) and a success flash message is returned — the other profile fields are ignored in that request.
+
+```json
+// Update name, phone, and avatar
+{
+  "name": "María Rodríguez",
+  "telefono": "51987654321",
+  "avatar": "<file upload>"
+}
+```
+
+```json
+// Change password only
+{
+  "password": "nuevaContraseña123",
+  "password_confirmation": "nuevaContraseña123"
+}
+```
+
+On success, `back()->with('success', '...')` is returned — the Vue frontend reads the flash message from the Inertia shared props to display a toast notification.
+
+## Payments History
+
+A full log of the student's payment records is available at:
+
+```http
+GET /student/payments
+```
+
+**Route name:** `student.payments.index`
+
+`PaymentController::index()` paginates payments (10 per page) with their associated `course`, `book`, and `bookOrder` relations eager-loaded. Each payment entry shows the linked resource (course or book), amount, current status, and shipping details when a book order is present.
+
+Payment statuses students may see:
+
+| Status | Description |
+|--------|-------------|
+| `pendiente` | Payment registered; awaiting comprobante upload |
+| `en_revision` | Comprobante uploaded; pending admin review |
+| `aprobado` | Payment confirmed; access or order fulfilled |
+| `rechazado` | Payment rejected by admin |
+
+Students can upload or replace a comprobante for a pending payment via:
+
+```http
+POST /student/payments/{payment}/comprobante
+```
+
+**Route name:** `student.payments.comprobante`
+
+## Subscription Status
+
+The `activeSubscription` prop on the profile page provides visibility into the current plan. When non-null, the frontend displays the plan's active status and `end_date` so students know when their access window closes.
+
+Subscription payments are managed through:
+
+```http
+POST /student/subscriptions/payment        # Initiate a subscription payment
+GET  /student/subscriptions/payment/status # Poll current payment status
+```
+
+Available subscription plan prices (configured via environment variables):
+
+| Plan | Price (S/) |
+|------|------------|
+| Trimestral (3 months) | 350 |
+| Semestral (6 months) | 600 |
+| Anual (12 months) | 990 |
+
+## Account Settings
+
+For email address and password changes outside the profile flow, students are directed to the platform's standard settings area at `/settings`. This uses Laravel's built-in auth scaffolding routes separate from the student-prefixed routes.
+
+<Tip>
+  IEE Edu implements `MustVerifyEmail` on the `User` model. Students should verify their email address after registration to unlock full platform access, including classroom entry and certificate downloads. If the verification email was not received, it can be resent from the `/verify-email` page.
+</Tip>

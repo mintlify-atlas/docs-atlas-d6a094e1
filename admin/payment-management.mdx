@@ -1,0 +1,105 @@
+---
+title: "Reviewing and Approving Student Payments"
+sidebarTitle: "Payments"
+description: "Admins review uploaded payment proofs (comprobantes), approve or reject payments to grant course and book access, and can revert approvals."
+---
+
+IEE Edu uses a manual payment verification workflow. Students upload a proof of payment (comprobante) through the student portal, and administrators review and approve or reject each submission. Approval triggers automatic access provisioning — enrolling the student in a course, granting a book download, or activating a subscription. The panel also allows admins to manually record payments on behalf of students and to revert approvals when corrections are needed.
+
+## Payment List
+
+```
+GET /admin/payments
+```
+
+Returns a paginated list of all payments, each loaded with its associated `user` (id, name, email), `course` (id, title), and `book` (id, title). A `stats` object is included in the response with counts for each status and aggregate book revenue.
+
+**Supported query filters:**
+
+| Parameter | Values | Description |
+|---|---|---|
+| `status` | `pendiente` \| `en_revision` \| `aprobado` \| `rechazado` | Filter by payment status |
+| `type` | `course` \| `membership` \| `books` | Filter by payment category |
+| `search` | string | Match against user name, email, course title, or book title |
+| `date` | `YYYY-MM-DD` | Filter payments created on a specific date |
+| `per_page` | `10` \| `20` \| `50` | Results per page (default `20`) |
+
+## Payment Detail
+
+```
+GET /admin/payments/{payment}
+```
+
+Loads the full payment record with its related `user`, `course`, `book`, and `bookOrder`. The admin view renders the uploaded comprobante image (if any) and exposes all booking-order shipping status labels for fulfillment workflows.
+
+## Create Payment
+
+Admins can manually register a payment on behalf of a student — useful for bank transfers, cash payments, or corrections.
+
+```
+POST /admin/payments
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `user_id` | integer | Required; the student receiving the payment |
+| `product_type` | `course` \| `book` | Determines whether `course_id` or `book_id` is applied |
+| `course_id` | integer | Required when `product_type = course` |
+| `book_id` | integer | Required when `product_type = book` |
+| `amount` | numeric | Payment amount in PEN |
+| `status` | string | If set to `aprobado`, the payment is immediately approved and access is provisioned |
+| `comprobante` | file | Optional proof-of-payment image (multipart upload) |
+
+If `status = aprobado` is passed in the create request, `PaymentService::approve()` is called automatically after the record is created, so you do not need to call the approve endpoint separately.
+
+## Approve a Payment
+
+```
+PATCH /admin/payments/{payment}/approve
+```
+
+Calling this endpoint triggers `PaymentService::approve()`, which:
+- For **course payments**: creates an `Enrollment` record for the student and grants permanent course access.
+- For **book payments**: records a `BookOrder` and grants the student download access.
+- For **subscription payments**: activates the student's subscription plan.
+
+The response message indicates whether a course or book was unlocked.
+
+## Reject a Payment
+
+```
+PATCH /admin/payments/{payment}/reject
+```
+
+Sets the payment `status` to `rechazado` and notifies the student so they can resubmit a corrected comprobante.
+
+## Revert an Approval
+
+```
+PATCH /admin/payments/{payment}/revert
+```
+
+Returns the payment to `en_revision` status, undoing the approval state.
+
+<Warning>
+  Reverting an approval does **not** automatically remove the student's course or book access. The enrollment and any access grants that were created at approval time remain active. If access must also be revoked, navigate to the student's record in [User Management](/admin/user-management) and manually remove the enrollment or deactivate the account.
+</Warning>
+
+## Payment Statuses
+
+| Status | Meaning |
+|---|---|
+| `pendiente` | Student submitted a comprobante; awaiting admin review |
+| `en_revision` | Admin has opened the payment for review (or a previously approved payment was reverted) |
+| `aprobado` | Payment verified; access provisioned |
+| `rechazado` | Payment rejected; student notified |
+
+## Payment Types
+
+The payment type is inferred from which foreign key is populated on the record:
+
+| Type | Identifier | Access granted |
+|---|---|---|
+| Course purchase | `course_id` is set | Permanent course enrollment |
+| Book purchase | `book_id` is set | Book download access |
+| Subscription | `subscription_type` is set, `course_id` and `book_id` are null | Premium plan activation |

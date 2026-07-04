@@ -1,0 +1,118 @@
+---
+title: "Managing Premium Subscriptions in the Admin Panel"
+sidebarTitle: "Subscriptions"
+description: "View, create, toggle, and cancel student subscriptions. Understand how subscription status drives course access across the platform."
+---
+
+IEE Edu's Premium subscription model grants students access to the full course catalog for the duration of their plan. Administrators can manually create subscriptions for students (for example, after a bank transfer payment), toggle active subscriptions on or off, and permanently delete subscription records. The platform's `SubscriptionObserver` and `SubscriptionAccessService` keep course access in sync automatically whenever a subscription changes state.
+
+## Subscription List
+
+```
+GET /admin/subscriptions
+```
+
+Returns a paginated list of all subscriptions, each loaded with the associated user (id, name, email). The response also enriches each record with the most recent related payment's `amount`, `comprobante`, and `status` to give the reviewing admin full context without opening a separate payment page.
+
+**Supported query parameters:**
+
+| Parameter | Description |
+|---|---|
+| `search` | Filter by user name or email |
+| `per_page` | Results per page (default `20`) |
+
+## Create Subscription
+
+Manually grant a Premium subscription to a student. This flow also creates an associated `aprobado` payment record for bookkeeping.
+
+```
+POST /admin/subscriptions
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `user_id` | integer | Required; the student to subscribe |
+| `type` | string | Plan slug, e.g. `trimestral`, `semestral`, or `anual` |
+| `months` | integer | Derived from the plan; sets the `end_date` offset |
+| `amount` | numeric | Payment amount to record |
+| `comprobante` | file | Optional proof-of-payment image (multipart) |
+
+<Steps>
+  <Step title="Select the student">
+    Use the user search AJAX endpoint (`GET /admin/users-search?q=...`) to find the student's `user_id`.
+  </Step>
+  <Step title="Choose a plan">
+    Select from the available plan options returned in the `planOptions` prop. Valid slugs include `trimestral`, `semestral`, and `anual`.
+  </Step>
+  <Step title="Submit the form">
+    On success, any previously active subscription for that user is expired, the new subscription is created with `status = activa`, and `SubscriptionAccessService::grantAccess()` is called to enroll the student in all subscription-accessible courses.
+  </Step>
+</Steps>
+
+## Toggle Subscription Status
+
+Flip a subscription between `activa` and `cancelada` with a single request.
+
+```
+PATCH /admin/subscriptions/{subscription}/toggle
+```
+
+No request body is required. When the model is saved, the `SubscriptionObserver` detects the status change and calls `SubscriptionAccessService::sync()` to immediately update the student's course access — granting it if activated, revoking it if cancelled.
+
+## Delete Subscription
+
+Permanently removes the subscription record from the database.
+
+```
+DELETE /admin/subscriptions/{subscription}
+```
+
+The `SubscriptionObserver` listens for the `deleted` Eloquent event and automatically revokes the student's subscription-granted course access when the record is deleted.
+
+## Subscription Fields Reference
+
+| Field | Type | Values / Notes |
+|---|---|---|
+| `user_id` | integer | Foreign key to `users` |
+| `type` | string | `trimestral`, `semestral`, or `anual` |
+| `start_date` | date | Set to `now()` when created by admin |
+| `end_date` | date | Calculated as `start_date + months` |
+| `status` | enum | `activa`, `cancelada`, or `expirada` |
+
+## Access Synchronization
+
+Course access is never managed in isolation — it is always derived from subscription state:
+
+- **`SubscriptionObserver`** — fires on `updated` and `deleted` Eloquent events. Calls `SubscriptionAccessService::sync()` to reconcile the student's enrollment flags (`subscription_granted`, `subscription_active`) with the current subscription status.
+- **`SubscriptionAccessService::grantAccess()`** — called on new subscriptions; creates enrollment records for all published subscription-accessible courses.
+- **`SubscriptionAccessService::sync()`** — called on toggles and deletes; activates or deactivates existing subscription-granted enrollments without touching permanently purchased ones.
+
+## Expiry Synchronization
+
+Subscriptions past their `end_date` are not expired in real time — they are swept by a scheduled Artisan command:
+
+```bash
+php artisan subscriptions:sync-expired
+```
+
+This command queries for subscriptions with `status = activa` and `end_date < now()`, marks them as `expirada`, and revokes subscription-granted course access for all affected users.
+
+<Note>
+  The `subscriptions:sync-expired` command must be registered in the Laravel scheduler for automatic expiry to work. Verify your server's crontab includes the Laravel scheduler entry:
+
+  ```bash
+  * * * * * cd /path-to-your-project && php artisan schedule:run >> /dev/null 2>&1
+  ```
+
+  Without this, expired subscriptions will not be marked automatically and students will retain access past their end date.
+</Note>
+
+<Tip>
+  To manually resync all subscription-granted access across the platform — for example after importing data or bulk-updating records — run:
+
+  ```bash
+  php artisan subscriptions:sync-access
+  ```
+
+  This is safe to run at any time and will not affect permanently purchased course enrollments.
+</Tip>

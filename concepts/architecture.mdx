@@ -1,0 +1,139 @@
+---
+title: "IEE Edu Architecture: Laravel, Inertia, and Vue 3"
+sidebarTitle: "Architecture"
+description: "How IEE Edu is structured: the Laravel 12 backend, Inertia.js SPA bridge, Vue 3 frontend, route files, service layer, and data flow."
+---
+
+IEE Edu is a monolithic SPA built on a single Laravel 12 application that serves both the API and the rendered HTML shell. Inertia.js acts as the bridge between the Laravel backend and the Vue 3 frontend — there is no separate REST API and no JSON fetching layer. Every page is a Vue component that receives its initial props directly from a Laravel controller, giving the application full server-side routing with a client-side navigation experience.
+
+## Backend (Laravel 12)
+
+The backend is written in PHP 8.2 and follows standard Laravel conventions. The three primary layers are:
+
+<CardGroup cols={3}>
+  <Card title="Controllers" icon="sliders">
+    Located in `app/Http/Controllers/`, split into `Admin/` and `Student/` namespaces to mirror route groupings. Each controller is thin — it validates input, calls a service, and returns an Inertia response.
+  </Card>
+  <Card title="Service Layer" icon="gear">
+    Business logic lives in `app/Services/`. Services are injected via Laravel's container and are the **only** place that writes to the database or orchestrates multi-step operations.
+  </Card>
+  <Card title="Models" icon="database">
+    Eloquent models live in `app/Models/`. They define relationships, casts, scopes, and access-check helper methods but contain no controller or view logic.
+  </Card>
+</CardGroup>
+
+## Frontend (Vue 3 + Inertia.js)
+
+The frontend is a Vue 3 application bundled by **Vite**. Tailwind CSS is used for styling. There are no standalone API calls — all data arrives as Inertia page props.
+
+| Directory | Purpose |
+|---|---|
+| `resources/js/pages/` | Vue page components, one per route |
+| `resources/js/layouts/` | Shared layout wrappers (admin, student, public) |
+| `resources/js/components/` | Reusable UI components |
+| `resources/css/` | Tailwind CSS entry point |
+
+Inertia's `<Link>` component replaces `<a>` tags for all internal navigation, enabling client-side transitions without full page reloads while keeping the URL and browser history in sync.
+
+## Route Structure
+
+Routes are split across five files, all required from `routes/web.php`:
+
+```php
+// routes/web.php
+require __DIR__.'/public.php';
+require __DIR__.'/auth.php';
+require __DIR__.'/settings.php';
+require __DIR__.'/student.php';
+require __DIR__.'/admin.php';
+```
+
+<CardGroup cols={2}>
+  <Card title="public.php" icon="globe">
+    **No middleware.** Marketing and catalog pages available to everyone: `/`, `/cursos`, `/masterclass`, `/cursos/{slug}`, `/planes`, `/publicaciones`, `/consultoria`. Rate-limited lead capture endpoints (`throttle:5,1` and `throttle:10,1`).
+  </Card>
+  <Card title="auth.php" icon="lock">
+    Authentication routes: login, register, password reset, and email verification. Provided by the Laravel Breeze / Fortify scaffolding.
+  </Card>
+  <Card title="student.php" icon="user-graduate">
+    **Middleware:** `['auth']` on all routes, with the `student.` name prefix and `/student` URI prefix. Contains the classroom, payments, certificates, profile, and catalog explore routes.
+  </Card>
+  <Card title="admin.php" icon="shield">
+    **Middleware:** `['auth', EnsureAdmin::class]` on all routes, with the `admin.` name prefix and `/admin` URI prefix. Contains full CRUD for courses, lessons, users, payments, subscriptions, and more.
+  </Card>
+</CardGroup>
+
+<Note>
+  `settings.php` handles account-level settings such as password and email changes, and is protected by the `auth` middleware.
+</Note>
+
+## Service Layer
+
+Services are the heart of IEE Edu's business logic. They are never called directly from route closures — only from controllers.
+
+| Service | Responsibility |
+|---|---|
+| `SubscriptionAccessService` | Grants and revokes course enrollment for subscription users. Single source of truth for subscription-based access via `grantAccess()`, `revokeAccess()`, and `sync()`. |
+| `PaymentService` | Approves, rejects, and reverts payments. On approval it triggers enrollment creation, book order fulfillment, or subscription activation depending on payment type. |
+| `EnrollmentService` | Creates individual course enrollments and handles free enrollment. |
+| `CertificateService` | Generates and stores PDF certificates upon course completion. |
+| `ExamService` | Evaluates quiz submissions against `EDUCATION_PASSING_SCORE` and enforces `EDUCATION_MAX_ATTEMPTS`. |
+| `DashboardStatsService` | Aggregates admin dashboard statistics with a cache layer to avoid repeated queries. |
+| `CourseService` | Handles course creation, slug generation, and publishing logic. |
+| `SiteSettingsService` | Reads and writes company-level configuration stored in the database. |
+
+## Data Flow
+
+Every HTTP request in IEE Edu follows this path:
+
+<Steps>
+  <Step title="Browser sends request">
+    The user clicks an Inertia `<Link>` or submits a form. Inertia sends the request with an `X-Inertia` header so Laravel knows to return a JSON response instead of a full HTML page.
+  </Step>
+  <Step title="Laravel Router">
+    `routes/web.php` loads all route files. Laravel matches the URI and HTTP method to a route definition and resolves the controller.
+  </Step>
+  <Step title="Middleware pipeline">
+    The global web middleware stack runs first (`HandleInertiaRequests`, `AddLinkHeadersForPreloadedAssets`, `CheckUserStatus`), then any route-specific middleware (`auth`, `EnsureAdmin`, `throttle`).
+  </Step>
+  <Step title="Controller">
+    The controller receives the validated request, calls one or more services, and prepares the data to render.
+  </Step>
+  <Step title="Service layer">
+    Services perform database operations, fire events, and return results to the controller. No controller ever writes directly to the database.
+  </Step>
+  <Step title="Inertia response">
+    The controller returns `Inertia::render('PageName', $props)`. On a full-page load this emits the HTML shell; on a client-side navigation it emits a JSON payload with the component name and props.
+  </Step>
+  <Step title="Vue component renders">
+    The Vue page component receives props and renders the UI. Subsequent navigations repeat from step 1 without a full page reload.
+  </Step>
+</Steps>
+
+## Middleware
+
+IEE Edu uses four key middleware classes:
+
+| Middleware | Registered at | Purpose |
+|---|---|---|
+| `HandleInertiaRequests` | Global web stack | Shares global Inertia props (auth user, flash messages) with every page component. |
+| `CheckUserStatus` | Global web stack (appended) | Logs out any authenticated user whose `status` is not `activo`. Zero extra DB queries — uses the already-loaded session user. |
+| `EnsureAdmin` | `admin.*` route group | Aborts with HTTP 403 if the user is not authenticated, does not have `role = 'admin'`, or does not have `status = 'activo'`. |
+| `auth` | `student.*` and `admin.*` route groups | Standard Laravel authentication guard — redirects unauthenticated users to the login page. |
+
+`CheckUserStatus` is appended to the global web middleware stack in `bootstrap/app.php` and also registered as the `check.status` alias:
+
+```php
+// bootstrap/app.php
+->withMiddleware(function (Middleware $middleware) {
+    $middleware->web(append: [
+        HandleInertiaRequests::class,
+        AddLinkHeadersForPreloadedAssets::class,
+        CheckUserStatus::class,
+    ]);
+
+    $middleware->alias([
+        'check.status' => CheckUserStatus::class,
+    ]);
+})
+```

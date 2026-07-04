@@ -1,0 +1,187 @@
+---
+title: "Creating and Publishing Courses in the Admin Panel"
+sidebarTitle: "Course Management"
+description: "Build courses with modules, lessons, materials, quizzes, and certificate templates. Publish, hide, or duplicate courses from the admin panel."
+---
+
+IEE Edu courses are the core content unit of the platform. The admin panel provides a full course editor that covers the entire lifecycle — from creating a draft and structuring the curriculum with modules, lessons, and materials, to attaching a quiz, generating certificates, and finally publishing the course to students. Courses can also be duplicated as templates to accelerate catalog growth.
+
+## Course Lifecycle
+
+Every course begins as a **BORRADOR** (draft) when first created. Admins explicitly publish or hide courses using dedicated endpoints — the `status` field cannot be changed directly through the update form.
+
+```
+BORRADOR  →  PUBLICADO  →  BORRADOR (hidden)
+```
+
+| Status | Description |
+|---|---|
+| `BORRADOR` | Draft — not visible to students |
+| `PUBLICADO` | Live — visible and enrollable by students |
+
+Use `PATCH /admin/courses/{course}/publish` to make a course live and `PATCH /admin/courses/{course}/hide` to pull it back to draft without deleting any content.
+
+## Course Fields Reference
+
+All fields below come from the `Course` model's `$fillable` array:
+
+| Field | Type | Notes |
+|---|---|---|
+| `title` | string | Course title |
+| `slug` | string | Auto-generated URL-safe identifier |
+| `description` | string | Full course description |
+| `price` | float | Base price in PEN |
+| `sale_price` | float | Computed from `price` and `discount` on the backend |
+| `discount` | float | Discount percentage; triggers `sale_price` calculation |
+| `duration_weeks` | integer | Estimated course duration in weeks |
+| `class_hours` | integer | Total contact/class hours |
+| `is_featured` | boolean | Pin to featured sections on the homepage |
+| `certificate_enabled` | boolean | Whether completing the course generates a certificate |
+| `type` | enum | `grabado` (recorded), `en_vivo` (live), or `evento`/`masterclass` |
+| `status` | enum | `BORRADOR` or `PUBLICADO` — managed via publish/hide endpoints |
+| `category_id` | integer | Foreign key to `categories` table |
+| `instructor_name` | string | Instructor display name |
+| `instructor_title` | string | Instructor professional title |
+| `instructor_bio` | string | Short instructor biography |
+| `instructor_image` | string | Path to instructor photo |
+| `image` | string | Course cover image path |
+| `start_date` | date | Session start date (live/event courses) |
+| `start_time` | time | Session start time |
+| `objectives` | text | Learning objectives |
+| `requirements` | text | Prerequisites |
+| `whatsapp_link` | string | Direct WhatsApp enrollment link |
+
+<Note>
+  When `type` is set to `masterclass` in the request body, the backend automatically maps it to `evento` to match the database enum. Treat `masterclass` and `evento` as equivalent. Masterclass/evento courses retain permanent student access even after a subscription expires.
+</Note>
+
+## Course CRUD
+
+<Steps>
+  <Step title="List courses">
+    ```
+    GET /admin/courses
+    ```
+    Supports `status`, `type`, `search`, and `per_page` query parameters. Returns paginated courses alongside all categories.
+  </Step>
+  <Step title="Create a course">
+    ```
+    POST /admin/courses
+    ```
+    New courses are always created with `status = BORRADOR`. Upload a cover image with the `image_file` field (multipart) and an instructor photo with `instructor_image_file`.
+  </Step>
+  <Step title="Edit a course">
+    ```
+    GET /admin/courses/{course}/edit
+    ```
+    Returns the full Inertia `CourseEditor` view with all related modules, lessons, quizzes, certificates, and enrollments loaded.
+  </Step>
+  <Step title="Update a course">
+    ```
+    PATCH /admin/courses/{course}
+    ```
+    Accepts the same fields as the store request. The `status` field is stripped — use the publish/hide endpoints instead.
+  </Step>
+  <Step title="Delete a course">
+    ```
+    DELETE /admin/courses/{course}
+    ```
+    Permanently deletes the course record. Ensure no active enrollments exist before deleting.
+  </Step>
+</Steps>
+
+## Publish and Hide
+
+```bash
+# Make a course live
+PATCH /admin/courses/{course}/publish
+
+# Return a course to draft
+PATCH /admin/courses/{course}/hide
+```
+
+## Duplicate a Course
+
+Create an exact copy of a course — including its modules, lessons, materials, and quiz — as a new `BORRADOR`. The new course receives a unique slug and a fresh ID.
+
+```
+POST /admin/courses/{course}/duplicate
+```
+
+<Tip>
+  Use duplication to build course templates. Create a well-structured "skeleton" course with your standard module layout and lesson placeholders, then duplicate it each time you launch a new program. This eliminates repetitive setup and keeps your curriculum structure consistent.
+</Tip>
+
+## Modules
+
+Modules group lessons into thematic sections within a course. They support drag-and-drop reordering via the `reorder` endpoint.
+
+| Method | Endpoint | Action |
+|---|---|---|
+| `GET` | `/admin/courses/{course}/modules` | List all modules |
+| `POST` | `/admin/courses/{course}/modules` | Create a module (`title`, optional `description`) |
+| `PUT` | `/admin/modules/{module}` | Update a module |
+| `DELETE` | `/admin/modules/{module}` | Delete a module |
+| `PATCH` | `/admin/courses/{course}/modules/reorder` | Reorder — body: `{ "order": [id1, id2, ...] }` |
+
+## Lessons
+
+Lessons belong directly to a course and can be nested inside a module. Each lesson holds the video/content and is the anchor point for attached materials.
+
+| Method | Endpoint | Action |
+|---|---|---|
+| `GET` | `/admin/courses/{course}/lessons` | List all lessons |
+| `POST` | `/admin/courses/{course}/lessons` | Create a lesson |
+| `PUT` | `/admin/lessons/{lesson}` | Update a lesson |
+| `DELETE` | `/admin/lessons/{lesson}` | Delete a lesson |
+| `PATCH` | `/admin/courses/{course}/lessons/reorder` | Reorder — body: `{ "order": [id1, id2, ...] }` |
+
+## Materials
+
+Downloadable resources attached to individual lessons. Materials can be uploaded files (PDF, Excel, ZIP) or external URLs.
+
+| Method | Endpoint | Action |
+|---|---|---|
+| `GET` | `/admin/lessons/{lesson}/materials` | List materials for a lesson |
+| `POST` | `/admin/lessons/{lesson}/materials` | Upload or link a material. Use `file` (multipart) for uploaded files or `external_url` for link-type materials. |
+| `PUT` | `/admin/materials/{material}` | Update material metadata |
+| `DELETE` | `/admin/materials/{material}` | Delete a material |
+
+The `kind` field is inferred from the file extension: `pdf`, `excel`, or `other`. For external links, set `kind = url`.
+
+## Quizzes
+
+Each course can have one or more quizzes. Questions and their answers are managed through the `questions` endpoints.
+
+| Method | Endpoint | Action |
+|---|---|---|
+| `GET` | `/admin/courses/{course}/quizzes` | List quizzes with questions and answers |
+| `POST` | `/admin/courses/{course}/quizzes` | Create a quiz |
+| `PUT` | `/admin/quizzes/{quiz}` | Update a quiz |
+| `DELETE` | `/admin/quizzes/{quiz}` | Delete a quiz |
+| `POST` | `/admin/questions` | Add a question to a quiz |
+| `PUT` | `/admin/questions/{question}` | Update a question |
+| `DELETE` | `/admin/questions/{question}` | Delete a question |
+
+## Certificate Template
+
+Each course with `certificate_enabled = true` can have a custom certificate template. The template is edited and saved per-course.
+
+```bash
+# Load the certificate template editor
+GET  /admin/courses/{course}/certificate-template
+
+# Save / update the template
+POST /admin/courses/{course}/certificate-template
+```
+
+## Categories
+
+Categories are shared across all courses and managed independently.
+
+| Method | Endpoint | Action |
+|---|---|---|
+| `GET` | `/admin/categories` | List all categories |
+| `POST` | `/admin/categories` | Create a category |
+| `PATCH` | `/admin/categories/{category}` | Update a category |
+| `DELETE` | `/admin/categories/{category}` | Delete a category |

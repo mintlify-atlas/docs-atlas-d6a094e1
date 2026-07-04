@@ -1,0 +1,174 @@
+---
+title: "Environment Variables Reference for IEE Edu"
+sidebarTitle: "Environment"
+description: "Complete reference of all .env variables for IEE Edu, including app settings, database, mail, queue, and IEE-specific pricing and contact configuration."
+---
+
+IEE Edu is configured entirely through a `.env` file at the project root. Start by copying the provided example file and filling in the values appropriate for your environment — whether local development, staging, or production. This page documents every variable available in `.env.example`, grouped by concern.
+
+```bash
+cp .env.example .env
+php artisan key:generate
+```
+
+---
+
+## Application
+
+These variables control the identity, runtime mode, and base URL of the application.
+
+| Variable | Default | Description |
+|---|---|---|
+| `APP_NAME` | `Laravel` | Application name shown in emails and the browser title bar. |
+| `APP_ENV` | `local` | Runtime environment: `local`, `staging`, or `production`. |
+| `APP_KEY` | _(empty)_ | 32-character encryption key. Generate with `php artisan key:generate`. |
+| `APP_DEBUG` | `true` | Show detailed error pages. **Must be `false` in production.** |
+| `APP_URL` | `http://localhost` | Canonical base URL used to generate links in emails and redirects. |
+| `APP_LOCALE` | `en` | Default locale for translations and date formatting. |
+| `APP_FALLBACK_LOCALE` | `en` | Locale used when a translation key is missing from the active locale. |
+| `APP_FAKER_LOCALE` | `en_US` | Locale used by Faker when seeding the database. |
+| `APP_MAINTENANCE_DRIVER` | `file` | How maintenance mode state is stored: `file` or `database`. |
+| `PHP_CLI_SERVER_WORKERS` | `4` | Number of workers for the built-in PHP development server. |
+| `BCRYPT_ROUNDS` | `12` | Cost factor for bcrypt password hashing. Increase for stronger hashes. |
+
+<Warning>
+  Always set `APP_DEBUG=false` in production. With debug mode enabled, exception stack traces — including environment variables and database credentials — can be exposed to end users in error pages.
+</Warning>
+
+---
+
+## Logging
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOG_CHANNEL` | `stack` | The default log channel. `stack` allows multiple channels simultaneously. |
+| `LOG_STACK` | `single` | Channels to combine when `LOG_CHANNEL=stack`. |
+| `LOG_DEPRECATIONS_CHANNEL` | `null` | Where to send PHP/Laravel deprecation warnings. |
+| `LOG_LEVEL` | `debug` | Minimum severity to log: `debug`, `info`, `warning`, `error`, `critical`. |
+
+---
+
+## Database
+
+IEE Edu uses Eloquent ORM. The connection type and credentials are set here.
+
+| Variable | Default | Description |
+|---|---|---|
+| `DB_CONNECTION` | `sqlite` | Database driver: `sqlite`, `mysql`, `pgsql`, or `sqlsrv`. |
+| `DB_HOST` | `127.0.0.1` | Hostname of the database server (MySQL/Postgres only). |
+| `DB_PORT` | `3306` | Port for the database server. MySQL default is `3306`. |
+| `DB_DATABASE` | `laravel` | Name of the database (or path to the `.sqlite` file). |
+| `DB_USERNAME` | `root` | Database user with read/write access. |
+| `DB_PASSWORD` | _(empty)_ | Password for the database user. |
+
+<Note>
+  `DB_CONNECTION` defaults to `sqlite` for zero-configuration local development — no database server is required. For production, switch to `mysql` (or `pgsql`) and uncomment the `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, and `DB_PASSWORD` lines in your `.env` file.
+</Note>
+
+---
+
+## Session & Cache
+
+| Variable | Default | Description |
+|---|---|---|
+| `SESSION_DRIVER` | `database` | Where sessions are stored: `database`, `file`, `cookie`, `redis`. |
+| `SESSION_LIFETIME` | `120` | Session expiration time in minutes of inactivity. |
+| `SESSION_ENCRYPT` | `false` | Encrypt session data at rest. Set `true` for added security. |
+| `SESSION_PATH` | `/` | The cookie path that applies to the session. |
+| `SESSION_DOMAIN` | `null` | The domain the session cookie is available on. |
+| `CACHE_STORE` | `database` | Cache driver: `database`, `file`, `redis`, `array`. |
+| `QUEUE_CONNECTION` | `database` | Where jobs are queued: `database`, `redis`, `sync`. |
+| `BROADCAST_CONNECTION` | `log` | Broadcasting driver used for real-time events. |
+
+---
+
+## Redis
+
+| Variable | Default | Description |
+|---|---|---|
+| `REDIS_CLIENT` | `phpredis` | PHP Redis client library: `phpredis` or `predis`. |
+| `REDIS_HOST` | `127.0.0.1` | Hostname of the Redis server. |
+| `REDIS_PASSWORD` | `null` | Redis authentication password, or `null` if none. |
+| `REDIS_PORT` | `6379` | Port the Redis server listens on. |
+
+---
+
+## Mail
+
+IEE Edu sends email notifications for course enrollment, payment approval, and email verification via `MustVerifyEmail`. Configure your mail transport here.
+
+| Variable | Default | Description |
+|---|---|---|
+| `MAIL_MAILER` | `log` | Mail transport: `log` (dev), `smtp`, `ses`, `mailgun`, `postmark`. |
+| `MAIL_SCHEME` | `null` | Transport encryption scheme: `tls`, `ssl`, or `null`. |
+| `MAIL_HOST` | `127.0.0.1` | SMTP server hostname. |
+| `MAIL_PORT` | `2525` | SMTP server port. Common values: `587` (TLS), `465` (SSL), `25`. |
+| `MAIL_USERNAME` | `null` | SMTP authentication username. |
+| `MAIL_PASSWORD` | `null` | SMTP authentication password. |
+| `MAIL_FROM_ADDRESS` | `hello@example.com` | The "From" email address on all outgoing mail. |
+| `MAIL_FROM_NAME` | `${APP_NAME}` | The "From" display name on all outgoing mail. |
+
+<Tip>
+  During local development, set `MAIL_MAILER=log` to write all emails to `storage/logs/laravel.log` instead of sending them. For production, use a real SMTP provider and set `MAIL_MAILER=smtp` along with the host, port, and credentials.
+</Tip>
+
+---
+
+## Storage
+
+| Variable | Default | Description |
+|---|---|---|
+| `FILESYSTEM_DISK` | `local` | Default filesystem disk: `local`, `public`, or `s3`. |
+| `AWS_ACCESS_KEY_ID` | _(empty)_ | AWS IAM access key ID for S3 storage. |
+| `AWS_SECRET_ACCESS_KEY` | _(empty)_ | AWS IAM secret access key for S3 storage. |
+| `AWS_DEFAULT_REGION` | `us-east-1` | AWS region where your S3 bucket resides. |
+| `AWS_BUCKET` | _(empty)_ | Name of the S3 bucket for file uploads. |
+| `AWS_USE_PATH_STYLE_ENDPOINT` | `false` | Use path-style S3 URLs. Set `true` for MinIO or compatible services. |
+
+---
+
+## IEE-Specific Configuration
+
+These variables are unique to the Instituto de Economía y Empresa platform. They control WhatsApp contact numbers used throughout the UI and the pricing for each subscription plan displayed on `/planes`.
+
+<ParamField query="IIE_WHATSAPP_SALES" type="string" default="51959166911">
+  WhatsApp phone number (with country code) used for the sales contact button. Displayed on the `/planes` pricing page and in the course purchase flow. The `51` prefix is the Peru country code.
+</ParamField>
+
+<ParamField query="IIE_WHATSAPP_SUPPORT" type="string" default="51934057867">
+  WhatsApp phone number (with country code) used for the student support contact button. Shown in the platform help sections and footer. The `51` prefix is the Peru country code.
+</ParamField>
+
+<ParamField query="IIE_PLAN_TRIMESTRAL_PRICE" type="integer" default="350">
+  Price in local currency (PEN) for the **quarterly** subscription plan. Rendered directly in the `/planes` page pricing cards and passed to the WhatsApp order message.
+</ParamField>
+
+<ParamField query="IIE_PLAN_SEMESTRAL_PRICE" type="integer" default="600">
+  Price in local currency (PEN) for the **semi-annual** (6-month) subscription plan. Rendered directly in the `/planes` page pricing cards and passed to the WhatsApp order message.
+</ParamField>
+
+<ParamField query="IIE_PLAN_ANUAL_PRICE" type="integer" default="990">
+  Price in local currency (PEN) for the **annual** subscription plan. Rendered directly in the `/planes` page pricing cards and passed to the WhatsApp order message.
+</ParamField>
+
+---
+
+## Education
+
+These variables configure the quiz and assessment engine that governs course progress for students.
+
+<ParamField query="EDUCATION_PASSING_SCORE" type="integer" default="14">
+  Minimum score (out of 20, following the Peruvian grading scale) a student must achieve to pass a quiz and unlock the next lesson. Students scoring below this threshold must retry the quiz.
+</ParamField>
+
+<ParamField query="EDUCATION_MAX_ATTEMPTS" type="integer" default="3">
+  Maximum number of attempts a student is allowed per quiz before the quiz is locked. Once the limit is reached, the student must contact an instructor to unlock additional attempts.
+</ParamField>
+
+---
+
+## Frontend
+
+| Variable | Default | Description |
+|---|---|---|
+| `VITE_APP_NAME` | `${APP_NAME}` | Exposes the app name to Vue components via `import.meta.env.VITE_APP_NAME`. Must be prefixed with `VITE_` to be accessible in the browser. |

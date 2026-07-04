@@ -1,0 +1,154 @@
+---
+title: "Setting Up the IEE Edu Task Scheduler"
+sidebarTitle: "Scheduler"
+description: "IEE Edu uses Laravel's scheduler to automatically expire subscriptions. Configure the crontab entry and verify scheduled tasks are running."
+---
+
+IEE Edu relies on Laravel's built-in task scheduler to automatically revoke course access when student subscriptions expire. Without the scheduler running, memberships that pass their `end_date` will remain marked as active in the database and students will continue to have access to subscription-gated content indefinitely. A single crontab entry on your server is all that is needed to activate the entire scheduling system.
+
+---
+
+## Required Scheduled Task
+
+The only scheduled command registered in `routes/console.php` is `subscriptions:sync-expired`. It is configured to run **daily**:
+
+```php
+// routes/console.php
+Schedule::command('subscriptions:sync-expired')->daily();
+```
+
+When this command runs, it finds all `Subscription` records where `status = 'activa'` and `end_date < now()`, marks them as `'expirada'`, and calls `SubscriptionAccessService::sync()` for each affected user to revoke their enrollment access flags. See [Artisan Commands](/configuration/artisan-commands) for a full breakdown of what the command does internally.
+
+---
+
+## Crontab Setup
+
+Laravel's scheduler works by having a single crontab entry that fires every minute. Laravel itself then decides which registered commands are due to run based on their configured frequency.
+
+<Steps>
+  <Step title="Open the crontab editor">
+    SSH into your production server and open the crontab for the web server user (commonly `www-data`, `forge`, or your deploy user):
+
+    ```bash
+    crontab -e
+    ```
+  </Step>
+  <Step title="Add the scheduler entry">
+    Paste the following line, replacing `/ruta/al/proyecto` with the absolute path to the IEE Edu project root (the directory containing `artisan`):
+
+    ```bash
+    * * * * * cd /ruta/al/proyecto && php artisan schedule:run >> /dev/null 2>&1
+    ```
+
+    For example, on a typical VPS:
+
+    ```bash
+    * * * * * cd /var/www/iee-edu && php artisan schedule:run >> /dev/null 2>&1
+    ```
+  </Step>
+  <Step title="Save and exit">
+    Save the file in your editor (`:wq` in vim, `Ctrl+O` then `Ctrl+X` in nano). The crontab is activated immediately — no service restart is required.
+  </Step>
+</Steps>
+
+<Note>
+  The `* * * * *` pattern fires every minute. Laravel evaluates which registered commands are actually due on each invocation. Since `subscriptions:sync-expired` is registered with `.daily()`, Laravel will only execute it once per day (at midnight UTC by default) even though the crontab fires every minute.
+</Note>
+
+---
+
+## Verify the Schedule
+
+After adding the crontab entry, confirm that Laravel can see the registered scheduled tasks:
+
+```bash
+php artisan schedule:list
+```
+
+You should see output similar to:
+
+```
+  0 0 * * *  php artisan subscriptions:sync-expired ......... Next Due: 2026-01-16 00:00:00
+```
+
+This confirms the command is registered, shows its cron expression (`0 0 * * *` = daily at midnight), and displays the next scheduled execution time.
+
+To also test that the crontab is firing correctly, you can watch the scheduler log in real time:
+
+```bash
+php artisan schedule:work
+```
+
+`schedule:work` runs the scheduler in the foreground every minute, printing output to the terminal. Use this during local development or staging verification — **do not** run it as a long-lived process in production (use the crontab there instead).
+
+---
+
+## Manual Execution
+
+You can trigger the command outside of the scheduler at any time:
+
+```bash
+php artisan subscriptions:sync-expired
+```
+
+This is useful when:
+
+- You need to immediately revoke access after cancelling a subscription manually in the database.
+- You are verifying a new deployment and want to confirm the command runs without errors before relying on the cron schedule.
+- You are running a post-migration cleanup after importing historical subscription data.
+
+---
+
+## Queue Worker (Required for Mail)
+
+The scheduler handles subscription expiry, but email notifications (payment confirmations, enrollment receipts, email verification) are dispatched to the queue. A separate queue worker process must be running for those jobs to be processed.
+
+<Note>
+  Start a queue worker in production with:
+
+  ```bash
+  php artisan queue:work --tries=3
+  ```
+
+  The `--tries=3` flag retries a failed job up to three times before moving it to the `failed_jobs` table. On servers managed with Supervisor or Laravel Forge, configure this command as a persistent daemon so it restarts automatically after a deployment or server reboot.
+</Note>
+
+For local development, the `composer dev` script starts the queue listener automatically alongside the Vite dev server and the PHP built-in server:
+
+```bash
+composer run dev
+```
+
+---
+
+## Deployment Checklist
+
+<Warning>
+  Without the crontab entry in place, `subscriptions:sync-expired` will never run automatically. Expired subscriptions will **not** be revoked and students will retain access to all subscription-gated courses past their membership end date. Verify the crontab is present after every new server provision.
+</Warning>
+
+After provisioning a new server or re-deploying, confirm the scheduler is wired up correctly:
+
+<Steps>
+  <Step title="Verify crontab">
+    ```bash
+    crontab -l | grep artisan
+    ```
+    Confirm the `schedule:run` line appears in the output.
+  </Step>
+  <Step title="Verify scheduled commands">
+    ```bash
+    php artisan schedule:list
+    ```
+    Confirm `subscriptions:sync-expired` is listed with a valid next-run time.
+  </Step>
+  <Step title="Verify queue worker">
+    Check your process manager (Supervisor, Forge, systemd) to confirm `php artisan queue:work --tries=3` is running and will be restarted on failure.
+  </Step>
+  <Step title="Run a manual sync">
+    ```bash
+    php artisan subscriptions:sync-expired
+    ```
+    Confirm the command exits cleanly with either `No expired subscriptions found.` or a count of synced subscriptions.
+  </Step>
+</Steps>

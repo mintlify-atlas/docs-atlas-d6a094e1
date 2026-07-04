@@ -1,0 +1,157 @@
+---
+title: "Roles and Permissions in IEE Edu"
+sidebarTitle: "Roles & Permissions"
+description: "IEE Edu has two roles — admin and student. Learn how access is enforced through middleware, model methods, and route grouping."
+---
+
+IEE Edu uses a simple two-role model: every registered user is either a `student` or an `admin`. There is no permissions table or policy file — access control is enforced at three distinct layers: the route group middleware, the `EnsureAdmin` middleware class, and helper methods on the `User` model. This keeps the system straightforward while still providing strong separation between the learner experience and the platform administration.
+
+## User Roles
+
+| Role | Description | How Granted |
+|---|---|---|
+| `admin` | Full access to the admin dashboard, all CRUD operations, payment approvals, user management, and subscription control. Also bypasses all course-access checks. | Granted via the `iie:make-admin` Artisan command. |
+| `student` | Default role for every self-registered user. Can access the dashboard, classroom, and their own payments and certificates. | Assigned automatically on registration. |
+
+To promote a user to admin, run:
+
+```bash
+php artisan iie:make-admin admin@example.com --name="Admin" --password=secret
+```
+
+The command uses `User::updateOrCreate`, so it is safe to run on an existing account. It sets `role = 'admin'` and `status = 'activo'` atomically.
+
+## User Status
+
+Every user also has a `status` field that is independent of their role. The two possible values are:
+
+| Status | Meaning |
+|---|---|
+| `activo` | The account is active and the user can log in. |
+| `inactivo` | The account is suspended. The user will be logged out on their next request. |
+
+The `CheckUserStatus` middleware enforces this at the global web level — it runs on every request and immediately logs out any authenticated user whose status is not `activo`:
+
+```php
+// app/Http/Middleware/CheckUserStatus.php
+public function handle(Request $request, Closure $next): Response
+{
+    $user = Auth::user();
+
+    // Solo actúa si hay un usuario autenticado
+    if ($user && $user->status !== 'activo') {
+        Auth::logout();
+
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return redirect()->route('login')
+            ->with('error', 'Tu cuenta ha sido desactivada. Contacta al administrador.');
+    }
+
+    return $next($request);
+}
+```
+
+<Tip>
+  `CheckUserStatus` uses the session-cached `Auth::user()` model — it makes **zero** additional database queries because the user is already loaded by the authentication guard.
+</Tip>
+
+Admins can toggle a user's status from `activo` to `inactivo` (and back) via `PATCH /admin/users/{user}/toggle-status`.
+
+## EnsureAdmin Middleware
+
+The `EnsureAdmin` middleware is applied to the entire `admin.*` route group. It performs three sequential checks — any failure immediately returns HTTP 403:
+
+```php
+// app/Http/Middleware/EnsureAdmin.php
+public function handle(Request $request, Closure $next)
+{
+    $user = Auth::user();
+
+    if (! $user) {
+        abort(403, 'Access denied. User not authenticated.');
+    }
+
+    if ($user->role !== 'admin') {
+        abort(403, "Access denied. User role '{$user->role}' is not admin.");
+    }
+
+    if ($user->status !== 'activo') {
+        abort(403, "Access denied. User status '{$user->status}' is not activo.");
+    }
+
+    return $next($request);
+}
+```
+
+The middleware is applied inline in `routes/admin.php`:
+
+```php
+Route::prefix('admin')
+    ->name('admin.')
+    ->middleware(['auth', EnsureAdmin::class])
+    ->group(function () {
+        // all admin routes
+    });
+```
+
+Note that `auth` runs before `EnsureAdmin::class`. If the session is unauthenticated, `auth` redirects to login before `EnsureAdmin` is ever reached.
+
+## Access Check Methods on the User Model
+
+The `User` model exposes several helper methods used by controllers and the `SubscriptionAccessService` to determine what content a student may access:
+
+| Method | Returns | Logic |
+|---|---|---|
+| `hasAccess($courseId)` | `bool` | `true` if admin, has an active subscription, the course is free, or the user has permanent individual access. |
+| `hasPermanentCourseAccess(int $courseId)` | `bool` | `true` if admin, has an approved course payment, or has a non-subscription enrollment. Persists after subscription expiry. |
+| `hasSubscriptionActive()` | `bool` | `true` if the user has a `Subscription` with `status = 'activa'` and `end_date >= now()`. |
+| `hasBookAccess(int $bookId)` | `bool` | `true` if the user has an approved payment for that book (or is admin). |
+| `hasApprovedBookPayment(int $bookId)` | `bool` | Direct check for an approved book payment record. |
+| `hasPendingBookPayment(int $bookId)` | `bool` | `true` if a book payment is `pendiente` or `en_revision`. |
+
+Example — the `hasAccess` method in full:
+
+```php
+// app/Models/User.php
+public function hasAccess($courseId)
+{
+    if ($this->role === 'admin') {
+        return true;
+    }
+
+    if ($this->hasSubscriptionActive()) {
+        return true;
+    }
+
+    $course = Course::find($courseId);
+    if ($course && $course->effectivePrice() <= 0) {
+        return true;
+    }
+
+    return $this->hasPermanentCourseAccess($courseId);
+}
+```
+
+## Route Protection
+
+Route protection is applied at the group level, not per individual route:
+
+```php
+// Student routes — authenticated users only
+Route::prefix('student')->name('student.')->middleware(['auth'])->group(function () {
+    // ...
+});
+
+// Admin routes — authenticated admins with active status only
+Route::prefix('admin')->name('admin.')->middleware(['auth', EnsureAdmin::class])->group(function () {
+    // ...
+});
+```
+
+Public routes in `public.php` carry no middleware at all — they are accessible to anonymous visitors.
+
+<Note>
+  The `User` model implements the `MustVerifyEmail` interface. Users who register but have not verified their email address may be blocked from certain routes that require the `verified` middleware, depending on Laravel's default email verification guards.
+</Note>

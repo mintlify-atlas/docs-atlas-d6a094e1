@@ -1,0 +1,114 @@
+---
+title: "Admin Dashboard: KPIs, Charts, and Reports"
+sidebarTitle: "Dashboard"
+description: "The IEE Edu admin dashboard shows enrollment stats, revenue metrics, payment charts, and allows downloading a management report."
+---
+
+The IEE Edu admin dashboard is the operational nerve center of the platform. It gives administrators an at-a-glance view of platform health — from total revenue and active subscriptions to pending payment approvals and course completion rates — all backed by a `DashboardStatsService` that aggregates data from users, payments, enrollments, books, certificates, and subscriptions in a single cached response.
+
+## Accessing the Dashboard
+
+The dashboard is protected by the `auth` middleware and the `EnsureAdmin` gate. Any request from a non-admin account is redirected automatically.
+
+```
+GET /admin/dashboard
+```
+
+The route renders the `admin/Dashboard` Inertia view and passes the full stats payload returned by `DashboardStatsService::getStats()`.
+
+## KPI Metrics
+
+`DashboardStatsService` computes the following stats and exposes them under the `stats` key of the Inertia props:
+
+<CardGroup cols={2}>
+  <Card title="Users" icon="users">
+    - `totalUsers` — all registered accounts
+    - `activeUsers` — accounts with `status = activo`
+    - `inactiveUsers` — accounts with `status = inactivo`
+    - `premiumUsers` — users with an active, non-expired subscription
+    - `newUsersThisMonth` — registrations in the current calendar month
+  </Card>
+  <Card title="Revenue" icon="circle-dollar-to-slot">
+    - `totalIncome` — sum of all `aprobado` payments
+    - `subIncome` — subscription-only income (no `course_id` or `book_id`)
+    - `courseIncome` — income from course purchases
+    - `bookIncome` — income from book purchases
+    - `bookSalesCount` — count of approved book payments
+  </Card>
+  <Card title="Courses" icon="graduation-cap">
+    - `totalCourses` / `publishedCourses` / `draftCourses`
+    - `recordedCourses` — type `grabado`
+    - `liveCourses` — type `en_vivo`
+    - `courseSales` — top 5 courses by approved payment count, with category, price, and total earned
+  </Card>
+  <Card title="Engagement" icon="chart-line">
+    - `totalEnrollments` / `completedCourses` — enrollments with a `completed_at` date
+    - `approvalRate` — percentage of enrollments where `passed = true`
+    - `certificatesIssued` — total issued certificates
+    - `whatsappLeads` / `whatsappLeadsMonth` — WhatsApp lead count all-time and this month
+  </Card>
+  <Card title="Books" icon="book">
+    - `totalBooks` / `availableBooks`
+    - `totalBookDownloads` / `bookDownloadsThisMonth`
+    - `bookWhatsappLeads` — downloads attributed to a WhatsApp source
+    - `topBooks` — top 5 books by revenue and download count
+  </Card>
+  <Card title="Subscriptions & Payments" icon="credit-card">
+    - `activeSubs` — subscriptions with `status = activa` and `end_date >= now`
+    - `expiredSubs` — subscriptions with `status = expirada`
+    - `pendingPayments` — payments with `status = pendiente`
+    - `approvedPayments` — payments with `status = aprobado`
+  </Card>
+</CardGroup>
+
+## Payment Charts
+
+The dashboard exposes four chart datasets under the `charts` key. Each entry contains `label`, `total`, `subs`, `courses`, and `books` float values — ready for a stacked bar or line chart.
+
+| Key | Coverage | Labels |
+|---|---|---|
+| `charts.weekly` | Last 7 days | Abbreviated day + date (e.g. `Lun 14`) |
+| `charts.monthly` | Last 4 weeks | `Semana 1` – `Semana 4` |
+| `charts.quarterly` | Last 3 months | Spanish month abbreviation (e.g. `Abr`) |
+| `charts.annually` | Last 6 months | Month + 2-digit year (e.g. `Abr 25`) |
+
+All monetary values are summed from `payments` with `status = aprobado` and are expressed in the platform's base currency (PEN). Timestamps are normalized to the `America/Lima` timezone before grouping.
+
+## Download Report
+
+Admins can download a PDF executive report for the current month:
+
+```
+GET /admin/dashboard/report
+```
+
+The `GenerateExecutiveReportAction` compiles the report and streams it as a download with the filename `Reporte_Mensual_iieEdu_MM_YYYY.pdf`.
+
+<Steps>
+  <Step title="Open the dashboard">
+    Navigate to `/admin/dashboard` in your browser.
+  </Step>
+  <Step title="Click Download Report">
+    Use the **Descargar Reporte** button in the dashboard header. The browser will prompt you to save the PDF.
+  </Step>
+</Steps>
+
+## Cache Behavior
+
+All stats are computed once and stored in the Laravel cache under the key `admin_dashboard_stats` for **5 minutes** (300 seconds). Subsequent page loads within that window return the cached payload without hitting the database.
+
+```php
+Cache::remember('admin_dashboard_stats', 5 * 60, function () {
+    // ... all queries
+});
+```
+
+The `pendingPayments` count displayed as a badge in the sidebar navigation (`admin_nav.pending_payments`) is derived from the same cached stats object.
+
+<Note>
+  After running database seeders or making bulk data changes, the cached stats will not reflect the new data until the cache expires. Run the following command to force a fresh calculation immediately:
+
+  ```bash
+  php artisan optimize:clear
+  ```
+</Note>
